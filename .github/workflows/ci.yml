@@ -19,6 +19,8 @@ jobs:
       - name: Check native architecture and tools
         run: |
           test "$(uname -m)" = arm64
+          xcode-select -p
+          xcodebuild -version
           xcrun swiftc --version
           xcrun --sdk macosx --show-sdk-path
           node --version

@@ -1,5 +1,7 @@
 # 归期 · DueBridge
 
+[![Source checks](https://github.com/jjbnb/DueBridge/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jjbnb/DueBridge/actions/workflows/ci.yml)
+
 把浙江大学课程平台中有明确截止时间的任务，汇总到 macOS「提醒事项」。先预览，再由你启用同步。
 
 <img src="Resources/DueBridge-1024.png" alt="DueBridge 图标" width="160">
@@ -49,12 +51,13 @@ open build/DueBridge.app
 
 自动检查依赖应用保持运行，按北京时间安排每日检查及有限失败重试；Mac 睡眠期间不保证准点执行，唤醒后再补查。系统权限、登录项审批和学校会话过期均可能阻止同步。
 
-测试使用合成任务、模拟会话和本机编译，不证明真实学校账号集成或重启恢复已经验证。本次社区发布没有进行真实登录、真实提醒事项写入或系统重启验收。
+自动测试使用合成任务、模拟会话和本机编译。0.1.1 的同一 MO 修复已在本机安装版收到用户反馈：通行证登录、回跳及课程和任务预览正常。社区版独立身份的首装、真实提醒事项写入和系统重启仍需单独验收，不能据此保证所有账号和环境都已验证。
 
 平台适配器通过静态注册扩展；测试中的第四个平台仅证明适配器契约，不是第四个已支持网站，也不会出现在正式应用里。见[适配器说明](docs/adapters.md)。
 
 ## 其他说明
 
+- [版本更新](CHANGELOG.md)：源码版本与修复记录。
 - [隐私说明](PRIVACY.md)：本机保存内容、联网范围与退出方式。
 - [安全报告](SECURITY.md)：使用合成材料反馈问题。
 - [参与开发](CONTRIBUTING.md)：测试、适配器和提交要求。

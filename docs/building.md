@@ -57,6 +57,12 @@ DUEBRIDGE_SDK="$(xcrun --sdk macosx26.5 --show-sdk-path)" ./scripts/build-app.sh
 
 GitHub Actions 使用 `macos-15`，并在运行前检查 `arm64`。该标签的当前架构以 [GitHub runner 文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)为准；架构检查可以阻止标签变化后误跑。CI 运行合成测试并构建应用，不启动应用，不登录学校账号，不发布二进制。
 
-测试通过只能证明相应合成场景和编译检查通过。真实登录、实际提醒事项写入、权限审批、休眠唤醒和系统重启需要单独验证；本次发布没有完成真实账号或重启集成验收。
+CI 开始执行工具检查后会记录所选开发工具目录、Xcode、Swift、SDK、Node.js 和 Python 版本。反馈构建问题时可引用这些工具版本，不要上传包含私人账号或订阅的运行资料。
+
+如果任务标红但步骤列表为空，先查看运行页面的 annotations。出现 `The job was not acquired by Runner of type hosted even after multiple attempts` 及 macOS arm64 capacity 提示，表示 GitHub 未能分配运行机器，代码尚未执行；等待资源恢复后，在该运行页选择 **Re-run failed jobs**。检查 [GitHub 服务状态](https://www.githubstatus.com/)也有帮助，但全局状态正常不保证某个机器池立即可用。
+
+如果已有步骤开始执行，按失败步骤查看日志：工具链输出用于定位 SDK/编译器问题，`FAIL` 或编译错误用于定位真实代码问题。不要用跳过合成测试、删除 arm64 检查或把失败设为可忽略来消除红色状态。
+
+测试通过只能证明相应合成场景和编译检查通过。同一 MO 修复在本机安装版已有登录及课程、任务预览正常的用户反馈；社区版独立身份首装、实际提醒事项写入、权限审批、休眠唤醒和系统重启仍需要单独验证。
 
 图标来自项目所有者使用 AI 图像生成工具创作的 DueBridge 视觉素材，包含应用 `.icns` 与展示 PNG，不含学校官方标志。源码包不包含 `.app` 或其他已编译可执行程序。
