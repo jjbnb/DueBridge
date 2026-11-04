@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>DueBridge</string>
+<key>CFBundleDisplayName</key><string>归期 · DueBridge</string>
+<key>CFBundleIdentifier</key><string>org.duebridge.community</string>
+<key>CFBundleExecutable</key><string>DueBridge</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>DueBridge.icns</string>
+<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>将你预览并启用的课程截止任务同步到你明确选择的提醒事项列表，保留手动完成状态和个人备注。</string>
+<key>NSRemindersUsageDescription</key><string>将你启用的课程截止任务同步到你选择的提醒事项列表。</string>
+</dict></plist>

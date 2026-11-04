@@ -1,0 +1,31 @@
+#!/bin/bash
+# Reviewed source inventory. Keep additions explicit so app/test builds share one target.
+APP_SOURCES=(
+  Sources/App.swift
+  Sources/AppSyncCoordinator.swift
+  Sources/Countdown.swift
+  Sources/Course.swift
+  Sources/DailySchedule.swift
+  Sources/ICS.swift
+  Sources/MacRestoreServices.swift
+  Sources/MoTaskPayload.swift
+  Sources/NativeAppServices.swift
+  Sources/NativePlatformAdapters.swift
+  Sources/NativeReminderWriter.swift
+  Sources/NativeSourceController.swift
+  Sources/NativeSourceState.swift
+  Sources/NativeSourceViews.swift
+  Sources/NativeTaskCollector.swift
+  Sources/NativeTaskSync.swift
+  Sources/NativeWebSession.swift
+  Sources/PreviewClock.swift
+  Sources/ReminderDestination.swift
+  Sources/ReminderDestinationView.swift
+  Sources/ReminderSync.swift
+  Sources/RestartRestore.swift
+  Sources/SourceDeadlineParser.swift
+  Sources/SourceReadGate.swift
+  Sources/SourceRegistry.swift
+  Sources/SourceTask.swift
+  Sources/XzzdTaskPayload.swift
+)

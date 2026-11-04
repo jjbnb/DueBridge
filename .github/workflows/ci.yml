@@ -1,0 +1,29 @@
+name: Source checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: source-checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  synthetic-tests-and-build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check native architecture and tools
+        run: |
+          test "$(uname -m)" = arm64
+          xcrun swiftc --version
+          xcrun --sdk macosx --show-sdk-path
+          node --version
+          python3 --version
+      - name: Synthetic tests (including authentication challenges)
+        run: ./scripts/test.sh all
+      - name: Build local app without launching
+        run: ./scripts/build-app.sh

@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "DueBridge";
+"CFBundleName" = "DueBridge";
+"NSRemindersFullAccessUsageDescription" = "Sync the course deadlines you preview and enable to the Reminders list you explicitly select, preserving completion and personal notes.";
+"NSRemindersUsageDescription" = "Sync enabled course deadlines to your selected Reminders list.";

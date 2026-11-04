@@ -1,0 +1,15 @@
+/build/
+.DS_Store
+*.app/
+*.dSYM/
+*.xcarchive/
+*.zip
+*.dmg
+*.pkg
+*.log
+*.swp
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
