@@ -323,14 +323,28 @@ struct CoreTests {
         do { try ReconciliationSafety.validate(events: [another], recognizedMarkers: [stableExisting.marker], knownMarkers: [], previouslySynced: true); check(false, "complete stable identity turnover blocks inserts") }
         catch { check(true, "complete stable identity turnover blocks inserts") }
         try ReconciliationSafety.validate(events: [laterExport, another], recognizedMarkers: [stableExisting.marker], knownMarkers: [], previouslySynced: true)
-        check(SyncPlanner.plan(events: [laterExport, another], existing: [stableExisting], now: now).operations.filter { $0.existingID == nil }.count == 1, "new task adds normally with existing stable overlap")
+        check(SyncPlanner.plan(events: [laterExport, another], existing: [stableExisting], now: now, localTimeZone: TimeZone(identifier: "Asia/Shanghai")!).operations.filter { $0.existingID == nil }.count == 1, "new task adds normally with existing stable overlap on its Shanghai fixture day")
         let v2Unmatched = ManagedReminder(id: "v2-other", marker: String(repeating: "b", count: 64), isCompleted: false, notes: "", identityVersion: 2, title: laterExport.title, dueDate: laterExport.deadline!.date)
         let neverReAdopt = try LegacyAdoption.prepare(events: [laterExport], existing: [v2Unmatched])
         check(neverReAdopt[0].marker == v2Unmatched.marker, "v2 never falls back to title/date adoption")
         var allDayExport = allDay.events[0]; allDayExport.uid = exportUID1
-        let allDayLegacy = ManagedReminder(id: "all-day-legacy", marker: v1Hash, isCompleted: true, notes: v1Notes, identityVersion: 1, title: allDayExport.title, dueDate: allDayExport.deadline!.date, isAllDay: true)
+        var hostCalendar = Calendar(identifier: .gregorian); hostCalendar.timeZone = .current
+        // ReminderWriter reconstructs legacy all-day dates in the host calendar.
+        // A Shanghai instant is not the same as the host-local civil date.
+        let hostDue = hostCalendar.date(from: DateComponents(year: 2026, month: 10, day: 24))!
+        if let requestedZone = ProcessInfo.processInfo.environment["TZ"], let expectedZone = TimeZone(identifier: requestedZone) {
+            check(TimeZone.current.secondsFromGMT(for: hostDue) == expectedZone.secondsFromGMT(for: hostDue),
+                  "the process actually uses its requested host timezone")
+        }
+        let allDayLegacy = ManagedReminder(id: "all-day-legacy", marker: v1Hash, isCompleted: true, notes: v1Notes, identityVersion: 1, title: allDayExport.title, dueDate: hostDue, isAllDay: true)
         let allDayAdopted = try LegacyAdoption.prepare(events: [allDayExport], existing: [allDayLegacy])
-        check(allDayAdopted[0].marker == ManagedNotes.marker(uid: exportUID1), "legacy all-day adoption compares date semantics")
+        check(allDayAdopted[0].marker == ManagedNotes.marker(uid: exportUID1), "legacy all-day adoption compares host-local civil date semantics")
+        var wrongDate = allDayLegacy
+        wrongDate.dueDate = hostCalendar.date(byAdding: .day, value: -1, to: hostDue)!
+        do {
+            _ = try LegacyAdoption.prepare(events: [allDayExport], existing: [wrongDate])
+            check(false, "different legacy civil date must not be adopted")
+        } catch { check(true, "different legacy civil date is rejected") }
         let shanghaiMidnight = ISO8601DateFormatter().date(from: "2026-10-24T16:00:00Z")!
         let previousSecond = shanghaiMidnight.addingTimeInterval(-1)
         let nextSecond = shanghaiMidnight.addingTimeInterval(1)

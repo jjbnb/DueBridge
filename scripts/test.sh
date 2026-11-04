@@ -19,7 +19,13 @@ compile_run() {
 }
 run_suite() {
   case "$1" in
-    core) compile_run core Sources/ICS.swift Sources/DailySchedule.swift Sources/Countdown.swift Sources/Course.swift Tests/CoreTests.swift ;;
+    core)
+      compile_run core Sources/ICS.swift Sources/DailySchedule.swift Sources/Countdown.swift Sources/Course.swift Tests/CoreTests.swift
+      for zone in UTC Asia/Shanghai America/Los_Angeles; do
+        printf '%s\n' "Core regressions with host timezone: $zone"
+        TZ="$zone" "$ROOT/build/core-tests"
+      done
+      ;;
     preview-clock) compile_run preview-clock Sources/PreviewClock.swift Tests/PreviewClockTests.swift ;;
     source-tasks) compile_run source-tasks "${IDENTITY[@]}" Tests/SourceTaskTests.swift ;;
     mo-payload) compile_run mo-payload "${IDENTITY[@]}" Sources/SourceDeadlineParser.swift Sources/MoTaskPayload.swift Tests/MoTaskPayloadTests.swift ;;
