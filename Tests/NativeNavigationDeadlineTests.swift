@@ -24,6 +24,7 @@
     var installed = false
     var completions = 0
     var timeout = false
+    var failure: NativeSessionError?
 }
 
 @MainActor private enum NavigationDeadlineChecks {
@@ -44,6 +45,56 @@
 }
 
 extension NativeWebSession {
+    @MainActor fileprivate func checkFramePolicyIsolation() async throws {
+        let previousArmed = ControlledNavigationClock.armed
+        startNavigationDeadline()
+        let deadline = navigationDeadline!
+        try await NavigationDeadlineChecks.waitFor { ControlledNavigationClock.armed == previousArmed + 1 }
+        let ticket = navigationDeadlineID
+        let receipt = NavigationReceipt()
+        let operation = Task { @MainActor in
+            do {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    navigationContinuation = continuation
+                    receipt.installed = true
+                }
+            } catch let failure as NativeSessionError { receipt.failure = failure }
+            catch {}
+            receipt.completions += 1
+        }
+        try await NavigationDeadlineChecks.waitFor { receipt.installed }
+        rejectNavigation(.unsafeRequest, isMainFrame: false, isCurrentView: true)
+        try NavigationDeadlineChecks.check(navigationDeadlineID == ticket && navigationContinuation != nil && lastError == nil, "rejected child frame preserves the main navigation deadline and continuation")
+        rejectNavigation(.invalidResponse, isMainFrame: true, isCurrentView: false)
+        try NavigationDeadlineChecks.check(navigationDeadlineID == ticket && navigationContinuation != nil && lastError == nil, "stale view rejection cannot settle the current navigation")
+        rejectNavigation(.unsafeRequest, isMainFrame: true, isCurrentView: true)
+        await operation.value
+        try NavigationDeadlineChecks.check(receipt.completions == 1 && receipt.failure == .unsafeRequest, "current main-frame rejection settles once with its safe failure")
+        try NavigationDeadlineChecks.check(navigationDeadline == nil && navigationContinuation == nil, "main-frame rejection invalidates its deadline")
+        rejectNavigation(.unsafeRequest, isMainFrame: true, isCurrentView: true)
+        try NavigationDeadlineChecks.check(receipt.completions == 1, "repeated policy rejection cannot resume a settled continuation twice")
+        ControlledNavigationClock.completeFirst()
+        await deadline.value
+        lastError = .network
+        acceptNavigation(isMainFrame: false, isCurrentView: true)
+        try NavigationDeadlineChecks.check(lastError == .network, "accepted child frame cannot hide a main-frame failure")
+        acceptNavigation(isMainFrame: true, isCurrentView: false)
+        try NavigationDeadlineChecks.check(lastError == .network, "accepted stale view cannot clear the current failure")
+        acceptNavigation(isMainFrame: true, isCurrentView: true)
+        try NavigationDeadlineChecks.check(lastError == nil, "valid current top-level navigation clears the previous failure")
+        try NavigationDeadlineChecks.check(webView == nil && loginWindow == nil, "frame policy checks create no WebKit resources")
+        cancel()
+    }
+    @MainActor fileprivate func checkFailedLoginPreservesCause(_ failure: NativeSessionError) async throws {
+        interactive = true
+        lastError = failure
+        var observed: NativeSessionError?
+        do { _ = try await finishLogin() }
+        catch let error as NativeSessionError { observed = error }
+        try NavigationDeadlineChecks.check(observed == failure, "finishing a failed interactive login preserves its safe failure")
+        try NavigationDeadlineChecks.check(webView == nil && loginWindow == nil, "failed login check creates no WebKit resources")
+        cancel()
+    }
     @MainActor fileprivate func checkQueuedNavigationDeadline(cancelFirst: Bool) async throws {
         try NavigationDeadlineChecks.check(webView == nil && loginWindow == nil, "session starts inert")
         let previousArmed = ControlledNavigationClock.armed
@@ -103,6 +154,12 @@ extension NativeWebSession {
 @main private struct NativeNavigationDeadlineTests {
     @MainActor static func main() async {
         do {
+            let frameSession = NativeWebSession(platform: .mo, storeID: UUID())
+            try await frameSession.checkFramePolicyIsolation()
+            for failure: NativeSessionError in [.timeout, .unsafeRequest, .network] {
+                let session = NativeWebSession(platform: .mo, storeID: UUID())
+                try await session.checkFailedLoginPreservesCause(failure)
+            }
             for cancelFirst in [false, true] {
                 let session = NativeWebSession(platform: .mo, storeID: UUID())
                 try await session.checkQueuedNavigationDeadline(cancelFirst: cancelFirst)

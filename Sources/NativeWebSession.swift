@@ -42,6 +42,12 @@ enum NativeWebPolicy {
         let hosts = interactive ? [host] + adapter.authentication.interactiveHosts : [host]
         return hosts.contains(parts.host ?? "")
     }
+    static func interactiveNavigationUpgrade(_ request: URLRequest, platform: NativePlatform, interactive: Bool, isMainFrame: Bool, registry: NativeAdapterRegistry = .production) -> URLRequest? {
+        guard interactive, isMainFrame, let adapter = registry.adapter(for: platform),
+              let upgraded = adapter.upgradeInteractiveLoginRequest(request), let url = upgraded.url,
+              navigationAllowed(url, platform: platform, interactive: false, registry: registry) else { return nil }
+        return upgraded
+    }
     static func validate(_ r: NativeWebReadRequest, platform: NativePlatform, registry: NativeAdapterRegistry = .production) throws {
         guard let adapter = registry.adapter(for: platform),
               navigationAllowed(r.url, platform: platform, interactive: false, registry: registry),
@@ -127,9 +133,12 @@ enum NativeWebScript {
     let platform: NativePlatform
     let storeID: UUID
     private let registry: NativeAdapterRegistry
-    private(set) var lastError: NativeSessionError?
+    private(set) var lastError: NativeSessionError? {
+        didSet { if let lastError { loginHint?.stringValue = loginFailureText(lastError) } }
+    }
     private var webView: WKWebView?
     private var loginWindow: NSWindow?
+    private var loginHint: NSTextField?
     private var interactive = false
     private var generation: UInt64 = 0
     private var activeOperation: UUID?
@@ -169,7 +178,28 @@ enum NativeWebScript {
         window.title = adapter.authentication.loginTitle
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.contentView = view
+        let content = NSView(frame: view.frame)
+        let hint = NSTextField(wrappingLabelWithString: "正在打开学校登录页面…")
+        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hint.textColor = .secondaryLabelColor
+        let retry = NSButton(title: "重新加载登录页", target: self, action: #selector(reloadLogin))
+        for child in [view, hint, retry] {
+            child.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(child)
+        }
+        NSLayoutConstraint.activate([
+            hint.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            hint.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
+            hint.trailingAnchor.constraint(equalTo: retry.leadingAnchor, constant: -12),
+            retry.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            retry.centerYAnchor.constraint(equalTo: hint.centerYAnchor),
+            view.topAnchor.constraint(equalTo: hint.bottomAnchor, constant: 12),
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: content.bottomAnchor)
+        ])
+        loginHint = hint
+        window.contentView = content
         loginWindow = window
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -177,8 +207,20 @@ enum NativeWebScript {
         startNavigationDeadline()
         trackedNavigation = view.load(URLRequest(url: adapter.authentication.loginURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 45))
     }
+    @objc private func reloadLogin() { openLogin() }
+    private func loginFailureText(_ failure: NativeSessionError) -> String {
+        switch failure {
+        case .timeout: return "登录页面加载超时。请检查网络后点击“重新加载登录页”。"
+        case .unsafeRequest: return "登录跳转未通过地址校验。请重新加载；若持续失败，请反馈此提示。"
+        case .cancelled: return "此次页面加载已取消，可以重新加载登录页。"
+        case .network: return "登录页面连接失败。请检查学校网站是否可访问，再重新加载。"
+        default: return "登录页面暂时无法完成加载，请重新加载后重试。"
+        }
+    }
     func finishLogin() async throws -> String {
-        guard interactive, let view = webView, let url = view.url,
+        guard interactive else { throw NativeSessionError.loginRequired }
+        if let lastError { throw lastError }
+        guard let view = webView, let url = view.url,
               NativeWebPolicy.navigationAllowed(url, platform: platform, interactive: false, registry: registry), !view.isLoading else { throw NativeSessionError.loginRequired }
         let result = try await verifyAccount()
         interactive = false
@@ -338,6 +380,7 @@ enum NativeWebScript {
         interactive = false
         let window = loginWindow
         loginWindow = nil
+        loginHint = nil
         window?.delegate = nil
         window?.close()
         // Drop the cancelled document so its delayed delegate callbacks cannot
@@ -350,22 +393,42 @@ enum NativeWebScript {
     }
     func close() { cancel() }
     func windowWillClose(_ notification: Notification) { cancel() }
+    private func rejectNavigation(_ error: NativeSessionError, isMainFrame: Bool, isCurrentView: Bool) {
+        guard isCurrentView, isMainFrame else { return }
+        lastError = error
+        finishNavigation(.failure(error))
+    }
+    private func acceptNavigation(isMainFrame: Bool, isCurrentView: Bool) {
+        guard isCurrentView, isMainFrame else { return }
+        lastError = nil
+        loginHint?.stringValue = "正在加载学校登录页面…"
+    }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard webView === self.webView else { decisionHandler(.cancel); return }
+        if let upgraded = NativeWebPolicy.interactiveNavigationUpgrade(navigationAction.request, platform: platform,
+                interactive: interactive, isMainFrame: navigationAction.targetFrame?.isMainFrame == true, registry: registry) {
+            // Invalidate the old navigation before cancellation can call back.
+            trackedNavigation = nil
+            decisionHandler(.cancel)
+            acceptNavigation(isMainFrame: true, isCurrentView: true)
+            startNavigationDeadline()
+            trackedNavigation = webView.load(upgraded)
+            return
+        }
         guard webView === self.webView, let url = navigationAction.request.url,
               NativeWebPolicy.navigationAllowed(url, platform: platform, interactive: interactive, registry: registry) else {
-            lastError = .unsafeRequest
-            finishNavigation(.failure(NativeSessionError.unsafeRequest))
+            rejectNavigation(.unsafeRequest, isMainFrame: navigationAction.targetFrame?.isMainFrame == true, isCurrentView: webView === self.webView)
             decisionHandler(.cancel)
             return
         }
+        acceptNavigation(isMainFrame: navigationAction.targetFrame?.isMainFrame == true, isCurrentView: true)
         decisionHandler(.allow)
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         guard webView === self.webView, let url = navigationResponse.response.url,
               NativeWebPolicy.navigationAllowed(url, platform: platform, interactive: interactive, registry: registry),
               let response = navigationResponse.response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-            lastError = .invalidResponse
-            finishNavigation(.failure(NativeSessionError.invalidResponse))
+            rejectNavigation(.invalidResponse, isMainFrame: navigationResponse.isForMainFrame, isCurrentView: webView === self.webView)
             decisionHandler(.cancel)
             return
         }
@@ -382,6 +445,7 @@ enum NativeWebScript {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard webView === self.webView, navigation === trackedNavigation else { return }
         finishNavigation(.success(()))
+        loginHint?.stringValue = "页面已加载。完成学校登录并回到课程平台后，在主窗口点击“登录完成，读取课程”。"
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         guard webView === self.webView, navigation === trackedNavigation else { return }

@@ -18,8 +18,12 @@ struct NativeAdapterCollection {
 protocol NativePlatformAdapter {
     var descriptor: SourceDescriptor { get }
     var authentication: NativeAuthenticationConfiguration { get }
+    func upgradeInteractiveLoginRequest(_ request: URLRequest) -> URLRequest?
     func validate(_ request: NativeWebReadRequest) throws
     @MainActor func collect(scope: SourceScope, reads: NativeReadContext) async throws -> NativeAdapterCollection
+}
+extension NativePlatformAdapter {
+    func upgradeInteractiveLoginRequest(_ request: URLRequest) -> URLRequest? { nil }
 }
 struct NativeAdapterRegistry {
     let sources: SourceRegistry
@@ -31,8 +35,8 @@ struct NativeAdapterRegistry {
             let descriptor = adapter.descriptor
             guard let platform = descriptor.nativePlatform, sources.descriptor(for: platform) == descriptor,
           let host = descriptor.verifiedHost,
-          Self.safeEntry(adapter.authentication.loginURL, host: host),
-          Self.safeEntry(adapter.authentication.backgroundURL, host: host),
+          Self.safeLoginEntry(adapter.authentication.loginURL, hosts: [host] + adapter.authentication.interactiveHosts),
+          Self.safeBackgroundEntry(adapter.authentication.backgroundURL, host: host),
           !adapter.authentication.scriptObject.isEmpty,
           adapter.authentication.interactiveHosts.allSatisfy({ Self.safeHost($0) }) else { throw SourceRegistryError.adapterMismatch }
             guard registered.updateValue(adapter, forKey: platform) == nil else { throw SourceRegistryError.duplicateIdentity }
@@ -40,7 +44,11 @@ struct NativeAdapterRegistry {
         guard registered.count == sources.nativeDescriptors.count else { throw SourceRegistryError.adapterMismatch }
         self.adapters = registered; self.sources = sources
     }
-    private static func safeEntry(_ url: URL, host: String) -> Bool {
+    private static func safeLoginEntry(_ url: URL, hosts: [String]) -> Bool {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), let host = parts.host else { return false }
+        return parts.scheme == "https" && hosts.contains(host) && parts.percentEncodedHost == host && parts.user == nil && parts.password == nil && (parts.port == nil || parts.port == 443) && parts.fragment == nil
+    }
+    private static func safeBackgroundEntry(_ url: URL, host: String) -> Bool {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
         return parts.scheme == "https" && parts.host == host && parts.percentEncodedHost == host && parts.user == nil && parts.password == nil && parts.port == nil && parts.fragment == nil && parts.query == nil
     }
@@ -53,8 +61,19 @@ struct NativeAdapterRegistry {
 
 struct MoPlatformAdapter: NativePlatformAdapter {
     let descriptor = SourceDescriptor.mo
+    func upgradeInteractiveLoginRequest(_ request: URLRequest) -> URLRequest? {
+        guard request.httpMethod == "GET", request.httpBody == nil, request.httpBodyStream == nil,
+              let url = request.url, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme == "http", parts.host == "mo.zju.edu.cn", parts.percentEncodedHost == "mo.zju.edu.cn",
+              parts.percentEncodedPath == "/user/login", parts.user == nil, parts.password == nil, parts.port == nil else { return nil }
+        parts.scheme = "https"
+        guard let secure = parts.url else { return nil }
+        var upgraded = request; upgraded.url = secure
+        return upgraded
+    }
     let authentication = NativeAuthenticationConfiguration(
-        loginTitle: "MO 登录", loginURL: URL(string: "https://mo.zju.edu.cn/")!, backgroundURL: URL(string: "https://mo.zju.edu.cn/robots.txt")!,
+        // Public MO passport entry, including its registered callback, copied from zjunewAuth.
+        loginTitle: "MO 登录", loginURL: URL(string: "https://zjuam.zju.edu.cn/cas/oauth2.0/authorize?response_type=code&client_id=mU53a5ysj5jfo8PUvP&redirect_uri=http://mo.zju.edu.cn/user/login")!, backgroundURL: URL(string: "https://mo.zju.edu.cn/robots.txt")!,
         interactiveHosts: ["zjuam.zju.edu.cn", "identity.zju.edu.cn"], scriptObject: #"""
     {
         binding() {
