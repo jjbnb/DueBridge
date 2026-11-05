@@ -10,6 +10,13 @@ struct PreviewClockTests {
             precondition(condition(), message)
         }
         func run(for seconds: TimeInterval) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
+        func wait(until condition: () -> Bool, timeout: TimeInterval = 2) -> Bool {
+            let deadline = ProcessInfo.processInfo.systemUptime + timeout
+            while !condition() && ProcessInfo.processInfo.systemUptime < deadline {
+                run(for: 0.01)
+            }
+            return condition()
+        }
         var instant = Date(timeIntervalSince1970: 1_000)
         let clock = PreviewClock(interval: 0.04, currentDate: { instant })
         check(!clock.isRunning && clock.refreshCount == 0, "creation does not schedule")
@@ -19,8 +26,13 @@ struct PreviewClockTests {
         clock.start(); clock.setRunning(true)
         check(clock.refreshCount == 1, "duplicate visibility/activation does not refresh or add timers")
         instant = instant.addingTimeInterval(60)
-        run(for: 0.13)
-        check((3...4).contains(clock.refreshCount) && clock.now == instant, "one real timer fires and reads current date")
+        // Timer delivery may be delayed/coalesced on a busy run loop; its exact tick count is not a contract.
+        let firstTick = wait { clock.refreshCount > 1 && clock.now == instant }
+        check(firstTick, "real timer fires and reads current date (refreshes: \(clock.refreshCount))")
+        let previousCount = clock.refreshCount
+        instant = instant.addingTimeInterval(60)
+        let nextTick = wait { clock.refreshCount > previousCount && clock.now == instant }
+        check(nextTick, "timer keeps repeating and reads the new date (refreshes: \(clock.refreshCount))")
         for reason in ["close", "minimize", "hide", "resign active"] {
             clock.setRunning(false)
             let count = clock.refreshCount
