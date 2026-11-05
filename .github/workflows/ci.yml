@@ -3,6 +3,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      native_arm64:
+        description: Run native ARM tests (requires an available macOS ARM runner)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -10,7 +15,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   synthetic-tests-and-build:
-    runs-on: macos-15
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.native_arm64 && 'macos-15' || 'macos-15-intel' }}
+    env:
+      DUEBRIDGE_TEST_ARCH: ${{ github.event_name == 'workflow_dispatch' && inputs.native_arm64 && 'arm64' || 'x86_64' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +25,7 @@ jobs:
           persist-credentials: false
       - name: Check native architecture and tools
         run: |
-          test "$(uname -m)" = arm64
+          test "$(uname -m)" = "$DUEBRIDGE_TEST_ARCH"
           xcode-select -p
           xcodebuild -version
           xcrun swiftc --version
@@ -29,3 +36,5 @@ jobs:
         run: ./scripts/test.sh all
       - name: Build local app without launching
         run: ./scripts/build-app.sh
+      - name: Verify Apple Silicon application architecture
+        run: test "$(/usr/bin/lipo -archs build/DueBridge.app/Contents/MacOS/DueBridge)" = arm64

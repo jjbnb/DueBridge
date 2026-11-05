@@ -3,10 +3,20 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 SUITE="${1:-all}"
 if [[ $# -gt 1 ]]; then printf '%s\n' 'Usage: ./scripts/test.sh [suite]' >&2; exit 2; fi
-if [[ "$(uname -m)" != arm64 ]]; then
-  printf '%s\n' 'Tests require an Apple Silicon Mac running a native arm64 shell.' >&2
+TEST_ARCH="${DUEBRIDGE_TEST_ARCH-arm64}"
+case "$TEST_ARCH" in
+  arm64|x86_64) ;;
+  *) printf '%s\n' 'DUEBRIDGE_TEST_ARCH must be arm64 or x86_64.' >&2; exit 1 ;;
+esac
+if [[ "$(uname -m)" != "$TEST_ARCH" ]]; then
+  if [[ "$TEST_ARCH" == arm64 ]]; then
+    printf '%s\n' 'Tests require an Apple Silicon Mac running a native arm64 shell.' >&2
+  else
+    printf '%s\n' 'DUEBRIDGE_TEST_ARCH=x86_64 requires an x86_64 shell.' >&2
+  fi
   exit 1
 fi
+FLAGS=(-sdk "$SDK" -target "$TEST_ARCH-apple-macosx14.0" -swift-version 5 -module-cache-path "$ROOT/build/module-cache")
 
 IDENTITY=(Sources/ICS.swift Sources/SourceRegistry.swift Sources/SourceTask.swift)
 LEGACY=(Sources/ICS.swift Sources/DailySchedule.swift Sources/Countdown.swift Sources/Course.swift Sources/RestartRestore.swift Sources/ReminderDestination.swift Sources/ReminderSync.swift)
@@ -19,6 +29,7 @@ compile_run() {
 }
 run_suite() {
   case "$1" in
+    script-architecture) python3 Tests/ScriptArchitectureTests.py ;;
     core)
       compile_run core Sources/ICS.swift Sources/DailySchedule.swift Sources/Countdown.swift Sources/Course.swift Tests/CoreTests.swift
       for zone in UTC Asia/Shanghai America/Los_Angeles; do
@@ -51,7 +62,7 @@ run_suite() {
     source-read-gate) compile_run source-read-gate Sources/SourceReadGate.swift Tests/SourceReadGateTests.swift ;;
     typecheck) xcrun swiftc "${FLAGS[@]}" -typecheck -parse-as-library "${APP_FRAMEWORKS[@]}" "${APP_SOURCES[@]}" ;;
     *)
-      printf '%s\n' "Unknown suite: $1" 'Available: all core preview-clock source-tasks mo-payload xzzd-payload restart native-plan native-state native-controller native-collector native-authentication native-navigation native-adapter native-coordinator native-writer destination source-read-gate typecheck' >&2
+      printf '%s\n' "Unknown suite: $1" 'Available: all script-architecture core preview-clock source-tasks mo-payload xzzd-payload restart native-plan native-state native-controller native-collector native-authentication native-navigation native-adapter native-coordinator native-writer destination source-read-gate typecheck' >&2
       exit 2
       ;;
   esac
@@ -59,7 +70,7 @@ run_suite() {
 if [[ "$SUITE" == all ]]; then
   command -v node >/dev/null
   command -v python3 >/dev/null
-  for suite in core preview-clock source-tasks mo-payload xzzd-payload restart native-plan native-state native-controller native-collector native-authentication native-navigation native-adapter native-coordinator native-writer destination source-read-gate typecheck; do
+  for suite in script-architecture core preview-clock source-tasks mo-payload xzzd-payload restart native-plan native-state native-controller native-collector native-authentication native-navigation native-adapter native-coordinator native-writer destination source-read-gate typecheck; do
     printf '\n%s\n' "== $suite =="
     run_suite "$suite"
   done

@@ -15,6 +15,8 @@ python3 --version
 
 脚本使用当前选定开发工具的 SDK，不硬编码本机 SDK 安装路径。Swift 使用 5 语言模式，部署目标为 `arm64-apple-macosx14.0`。这说明编译目标，不表示每个 macOS 版本都经过运行验收。
 
+测试默认要求原生 `arm64` 主机。CI 使用 Intel Mac 时显式设置 `DUEBRIDGE_TEST_ARCH=x86_64`，测试程序按 `x86_64-apple-macosx14.0` 编译并原生执行；请求的架构必须与当前进程架构一致，无效或不匹配的值会在调用编译器前报错。此变量只影响测试，应用构建始终使用 ARM 目标。Apple Silicon 上的 Rosetta 测试不能替代默认的 ARM 原生回归。
+
 如果选定 SDK 与编译器不匹配，SwiftUI 宏插件可能缺失。准备此版本时，本机默认 macOS 27.2 SDK 出现 `SwiftUIMacros` 缺失；兼容的 macOS 26.5 SDK 可编译相关界面。请使用配套的 Xcode / SDK；也可在单次命令中明确选择已经安装且兼容的 SDK：
 
 ```sh
@@ -55,13 +57,15 @@ DUEBRIDGE_SDK="$(xcrun --sdk macosx26.5 --show-sdk-path)" ./scripts/build-app.sh
 
 ## CI 与验证含义
 
-GitHub Actions 使用 `macos-15`，并在运行前检查 `arm64`。该标签的当前架构以 [GitHub runner 文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)为准；架构检查可以阻止标签变化后误跑。CI 运行合成测试并构建应用，不启动应用，不登录学校账号，不发布二进制。
+GitHub Actions 默认使用标准 `macos-15-intel`：检查主机为 `x86_64`，运行原生合成测试，然后用相同源码交叉编译 ARM 应用，最后通过 `lipo` 严格校验产物只有 `arm64`。标签和架构以 [GitHub runner 文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)为准。CI 不启动应用、不登录学校账号、不发布二进制。
+
+交叉编译不等于 ARM 原生运行验证。Apple Silicon 本机仍应执行 `./scripts/test.sh all`；需要云端 ARM 原生回归时，在 Actions 的 **Run workflow** 中勾选 **native_arm64**，会改用标准 `macos-15` ARM 主机并执行同一套测试和构建。这一路径仍可能受 GitHub ARM 容量影响。默认 Intel 检查不会扩大应用的支持平台，也没有跳过测试。
 
 CI 开始执行工具检查后会记录所选开发工具目录、Xcode、Swift、SDK、Node.js 和 Python 版本。反馈构建问题时可引用这些工具版本，不要上传包含私人账号或订阅的运行资料。
 
 如果任务标红但步骤列表为空，先查看运行页面的 annotations。出现 `The job was not acquired by Runner of type hosted even after multiple attempts` 及 macOS arm64 capacity 提示，表示 GitHub 未能分配运行机器，代码尚未执行；等待资源恢复后，在该运行页选择 **Re-run failed jobs**。检查 [GitHub 服务状态](https://www.githubstatus.com/)也有帮助，但全局状态正常不保证某个机器池立即可用。
 
-如果已有步骤开始执行，按失败步骤查看日志：工具链输出用于定位 SDK/编译器问题，`FAIL` 或编译错误用于定位真实代码问题。不要用跳过合成测试、删除 arm64 检查或把失败设为可忽略来消除红色状态。
+如果已有步骤开始执行，按失败步骤查看日志：工具链输出用于定位 SDK/编译器问题，`FAIL` 或编译错误用于定位真实代码问题。不要用跳过合成测试、删除 ARM 产物校验或把失败设为可忽略来消除红色状态。调整运行机器时，应分别验证原生测试架构和应用产物架构。
 
 测试通过只能证明相应合成场景和编译检查通过。同一 MO 修复在本机安装版已有登录及课程、任务预览正常的用户反馈；社区版独立身份首装、实际提醒事项写入、权限审批、休眠唤醒和系统重启仍需要单独验证。
 
