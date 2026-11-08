@@ -19,7 +19,7 @@ fi
 FLAGS=(-sdk "$SDK" -target "$TEST_ARCH-apple-macosx14.0" -swift-version 5 -module-cache-path "$ROOT/build/module-cache")
 
 IDENTITY=(Sources/ICS.swift Sources/SourceRegistry.swift Sources/SourceTask.swift)
-LEGACY=(Sources/ICS.swift Sources/DailySchedule.swift Sources/Countdown.swift Sources/Course.swift Sources/RestartRestore.swift Sources/ReminderDestination.swift Sources/ReminderSync.swift)
+LEGACY=(Sources/ICS.swift Sources/DailySchedule.swift Sources/Countdown.swift Sources/Course.swift Sources/RestartRestore.swift Sources/ReminderDestination.swift Sources/ReminderSync.swift Sources/CalendarSync.swift)
 NATIVE_WEB=("${IDENTITY[@]}" Sources/SourceDeadlineParser.swift Sources/MoTaskPayload.swift Sources/XzzdTaskPayload.swift Sources/NativeWebSession.swift Sources/NativeTaskCollector.swift Sources/NativePlatformAdapters.swift)
 NATIVE_STATE=("${LEGACY[@]}" Sources/SourceRegistry.swift Sources/SourceTask.swift Sources/NativeSourceState.swift)
 compile_run() {
@@ -41,6 +41,7 @@ run_suite() {
     source-tasks) compile_run source-tasks "${IDENTITY[@]}" Tests/SourceTaskTests.swift ;;
     mo-payload) compile_run mo-payload "${IDENTITY[@]}" Sources/SourceDeadlineParser.swift Sources/MoTaskPayload.swift Tests/MoTaskPayloadTests.swift ;;
     xzzd-payload) compile_run xzzd-payload "${IDENTITY[@]}" Sources/SourceDeadlineParser.swift Sources/XzzdTaskPayload.swift Tests/XzzdTaskPayloadTests.swift ;;
+    calendar-sync) compile_run calendar-sync "${LEGACY[@]}" Tests/CalendarSyncTests.swift ;;
     restart) compile_run restart "${LEGACY[@]}" Tests/RestartRestoreTests.swift ;;
     native-plan) compile_run native-plan "${IDENTITY[@]}" Sources/DailySchedule.swift Sources/Countdown.swift Sources/Course.swift Sources/NativeTaskSync.swift Tests/NativeTaskSyncTests.swift ;;
     native-state) compile_run native-state "${NATIVE_STATE[@]}" Tests/NativeStateTests.swift ;;
@@ -62,7 +63,7 @@ run_suite() {
     source-read-gate) compile_run source-read-gate Sources/SourceReadGate.swift Tests/SourceReadGateTests.swift ;;
     typecheck) xcrun swiftc "${FLAGS[@]}" -typecheck -parse-as-library "${APP_FRAMEWORKS[@]}" "${APP_SOURCES[@]}" ;;
     *)
-      printf '%s\n' "Unknown suite: $1" 'Available: all script-architecture core preview-clock source-tasks mo-payload xzzd-payload restart native-plan native-state native-controller native-collector native-authentication native-navigation native-adapter native-coordinator native-writer destination source-read-gate typecheck' >&2
+      printf '%s\n' "Unknown suite: $1" 'Available: all script-architecture core preview-clock source-tasks mo-payload xzzd-payload restart calendar-sync native-plan native-state native-controller native-collector native-authentication native-navigation native-adapter native-coordinator native-writer destination source-read-gate typecheck' >&2
       exit 2
       ;;
   esac
@@ -70,7 +71,7 @@ run_suite() {
 if [[ "$SUITE" == all ]]; then
   command -v node >/dev/null
   command -v python3 >/dev/null
-  for suite in script-architecture core preview-clock source-tasks mo-payload xzzd-payload restart native-plan native-state native-controller native-collector native-authentication native-navigation native-adapter native-coordinator native-writer destination source-read-gate typecheck; do
+  for suite in script-architecture core preview-clock source-tasks mo-payload xzzd-payload restart calendar-sync native-plan native-state native-controller native-collector native-authentication native-navigation native-adapter native-coordinator native-writer destination source-read-gate typecheck; do
     printf '\n%s\n' "== $suite =="
     run_suite "$suite"
   done

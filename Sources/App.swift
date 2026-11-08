@@ -13,12 +13,12 @@ struct MainView: View {
                 Image(systemName: "calendar.badge.clock").font(.largeTitle).foregroundStyle(.blue)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("归期 · DueBridge").font(.title2.bold())
-                    Text("把课程截止事项同步到已保存的苹果提醒事项列表").foregroundStyle(.secondary)
+                    Text("将课程截止事项同步到提醒事项或苹果日历").foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(controller.enabled ? "同步已启用" : "未启用 / 已暂停")
+                Text(controller.anyEnabled ? "同步已启用" : "未启用 / 已暂停")
                     .font(.caption.bold()).padding(7)
-                    .background(controller.enabled ? Color.green.opacity(0.13) : Color.gray.opacity(0.12), in: Capsule())
+                    .background(controller.anyEnabled ? Color.green.opacity(0.13) : Color.gray.opacity(0.12), in: Capsule())
             }
             VStack(alignment: .leading, spacing: 7) {
                 Text("BB 私人日历订阅链接").font(.headline)
@@ -101,16 +101,21 @@ struct MainView: View {
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             VStack(alignment: .leading, spacing: 5) {
+                Label("提醒事项", systemImage: "checklist").font(.headline)
                 Text(controller.status).font(.callout).textSelection(.enabled)
                 Text(controller.lastSync).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }.frame(maxWidth: .infinity, alignment: .leading)
             HStack {
-                Button("启用同步") { Task { await controller.enable() } }
+                Button("启用同步到提醒事项") { Task { await controller.enable() } }
                     .buttonStyle(.borderedProminent).disabled(!controller.canEnable)
-                Button("立即同步") { Task { await controller.manualSync() } }
+                Button("立即同步提醒事项") { Task { await controller.manualSync() } }
                     .disabled(!controller.enabled || controller.busy)
-                Button("暂停") { controller.pause() }.disabled(!controller.enabled)
+                Button("暂停提醒事项") { controller.pause() }.disabled(!controller.enabled)
                 Spacer()
+            }
+            if let calendar = controller.calendar {
+                CalendarSourceControls(calendar: calendar, busy: controller.busy, canEnable: !controller.busy && controller.preview != nil,
+                                       enable: controller.enableCalendar, sync: controller.manualSyncCalendar, pause: controller.pauseCalendar)
             }
             HStack {
                 Button("保存并开机恢复") { Task { await controller.saveForRestart() } }
@@ -239,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         statusMenu.isEnabled = false
         menu.addItem(.separator())
         let show = menu.addItem(withTitle: "打开 归期 · DueBridge", action: #selector(showWindow), keyEquivalent: "o"); show.target = self
-        syncMenu = menu.addItem(withTitle: "立即同步", action: #selector(syncNow), keyEquivalent: ""); syncMenu.target = self
+        syncMenu = menu.addItem(withTitle: "立即同步所有已启用目标", action: #selector(syncNow), keyEquivalent: ""); syncMenu.target = self
         pauseMenu = menu.addItem(withTitle: "暂停同步", action: #selector(pause), keyEquivalent: ""); pauseMenu.target = self
         menu.addItem(.separator())
         let quit = menu.addItem(withTitle: "退出 归期 · DueBridge", action: #selector(quitApp), keyEquivalent: "q"); quit.target = self

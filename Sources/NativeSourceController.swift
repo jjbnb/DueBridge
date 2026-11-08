@@ -35,6 +35,7 @@ struct NativeSourcePreview {
     private let services: NativeSourceServices
     private let scheduler: SyncScheduling
     private let login: RestartLogin
+    let calendar: CalendarSourceSync?
     private var state: NativePlatformState?
     private var damagedState = false
     private var started = false
@@ -42,8 +43,13 @@ struct NativeSourcePreview {
     private var pendingAutomatic = false
     var connected: Bool { state?.active != nil }
     var canEnable: Bool { !busy && !enabled && preview != nil && !waitingForLogin }
-    init(platform: NativePlatform, store: NativeStateStore, services: NativeSourceServices, scheduler: SyncScheduling, login: RestartLogin) {
+    var calendarEnabled: Bool { calendar?.enabled == true }
+    var anyEnabled: Bool { enabled || calendarEnabled }
+    var canEnableCalendar: Bool { !busy && !calendarEnabled && preview != nil && !waitingForLogin }
+    init(platform: NativePlatform, store: NativeStateStore, services: NativeSourceServices, scheduler: SyncScheduling,
+         login: RestartLogin, calendar: CalendarSourceSync? = nil) {
         self.platform = platform; self.store = store; self.services = services; self.scheduler = scheduler; self.login = login
+        self.calendar = calendar
         do { state = try store.load(platform); restoreEnabled = state?.active?.restoreEnabled == true }
         catch { damagedState = true; status = "本机连接记录无法校验，已停止接入以避免重复事项。请保留记录并检查应用。" }
     }
@@ -55,14 +61,18 @@ struct NativeSourcePreview {
     private func scope(_ record: NativeConnectionState) throws -> SourceScope {
         try SourceScope(platform: platform, host: platform.verifiedHost, connectionID: record.id)
     }
+    private func calendarScope(_ record: NativeConnectionState) -> CalendarScope {
+        CalendarScope(key: platform.rawValue + "-" + record.id.uuidString.lowercased())
+    }
     private func valid(_ token: Int, _ id: UUID) -> Bool {
         started && generation == token && state?.activeID == id && !Task.isCancelled
     }
     func start() async {
         guard !started else { return }; started = true
         refreshLoginStatus()
-        guard let c = state?.active, let storeID = state?.storeID,
-              c.restoreEnabled && c.desiredEnabled, !damagedState else { return }
+        guard let c = state?.active, let storeID = state?.storeID, c.restoreEnabled, !damagedState else { return }
+        let wantsCalendar = calendar?.savedIntent(scope: calendarScope(c)) == true
+        guard c.desiredEnabled || wantsCalendar else { return }
         let token = generation
         do {
             busy = true; defer { busy = false }
@@ -75,7 +85,8 @@ struct NativeSourcePreview {
             status = services.errorMessage(error) + " 请重新连接本平台后恢复同步。"
             return
         }
-        enabled = true
+        enabled = c.desiredEnabled
+        if wantsCalendar { calendar?.restore(scope: calendarScope(c)) }
         status = "本平台登录已验证，已恢复同步。"
         if let date = c.lastSuccess { lastSync = "上次成功：" + Self.time(date) }
         await handleWake()
@@ -84,6 +95,7 @@ struct NativeSourcePreview {
         guard started, !busy, !damagedState else { return }
         generation += 1; pendingAutomatic = false; scheduler.cancel(); services.cancel()
         enabled = false; preview = nil
+        calendar?.pause(); calendar?.stop()
         do {
             if state == nil { try save(NativePlatformState()) }
             if state?.active != nil { try change { $0.desiredEnabled = false; $0.retry = nil } }
@@ -108,7 +120,7 @@ struct NativeSourcePreview {
             guard valid(token, connected.id) else { return }
             waitingForLogin = false
             try await loadPreview(record: connected, token: token)
-            status = "课程已读取；核对截止时间后可启用同步。尚未写入提醒事项。"
+            status = "课程已读取；核对截止时间后可启用同步。尚未写入。"
             refreshLoginStatus()
         } catch { if generation == token { status = services.errorMessage(error) } }
     }
@@ -125,11 +137,11 @@ struct NativeSourcePreview {
     func readPreview() async {
         guard started, !busy, !waitingForLogin, let c = state?.active else { return }
         let token = generation
-        busy = true; status = "正在完整读取课程任务；预览不会写入提醒事项。"
+        busy = true; status = "正在完整读取课程任务；预览不会写入。"
         defer { finishOperation() }
         do {
             try await loadPreview(record: c, token: token)
-            if valid(token, c.id) { status = "预览已更新，按截止时间排序；尚未写入提醒事项。" }
+            if valid(token, c.id) { status = "预览已更新，按截止时间排序；尚未写入。" }
         } catch { if valid(token, c.id) { preview = nil; status = services.errorMessage(error) } }
     }
     func enable() async {
@@ -141,37 +153,86 @@ struct NativeSourcePreview {
             guard valid(token, c.id) else { return }
             try change { $0.desiredEnabled = true; $0.retry = nil; $0.blocked = false }
             enabled = true
-            await performSync(token: token)
+            await performSync(token: token, reminders: true, events: false)
         } catch { if valid(token, c.id) { status = services.errorMessage(error) } }
     }
-    func manualSync() async {
-        guard started, enabled, !busy, !waitingForLogin else { return }
+    func enableCalendar() async {
+        guard started, canEnableCalendar, let c = state?.active, let calendar,
+              calendar.enable(scope: calendarScope(c)) else { return }
+        await manualSyncCalendar()
+    }
+    func manualSync() async { await runManual(reminders: enabled, events: false) }
+    func manualSyncCalendar() async { await runManual(reminders: false, events: calendarEnabled) }
+    func syncAllNow() async { await runManual(reminders: enabled, events: calendarEnabled) }
+    private func runManual(reminders: Bool, events: Bool) async {
+        guard started, !busy, !waitingForLogin, reminders || events else { return }
         busy = true; defer { finishOperation() }
-        await performSync(token: generation)
+        await performSync(token: generation, reminders: reminders, events: events)
+    }
+    private func invalidateOperation() {
+        generation += 1; pendingAutomatic = false; waitingForLogin = false
+        services.cancel(); scheduler.cancel()
+    }
+    func pauseCalendar() {
+        calendar?.pause(savedScope: state?.active.map { calendarScope($0) })
+        if !enabled { invalidateOperation() }
+        arm()
     }
     func pause() {
-        generation += 1; pendingAutomatic = false; enabled = false; waitingForLogin = false
-        services.cancel(); scheduler.cancel()
+        if !calendarEnabled { invalidateOperation() }
+        enabled = false
+        defer { arm() }
         do { if state?.active != nil { try change { $0.desiredEnabled = false; $0.retry = nil } } }
         catch { status = "已暂停本次运行，但未能保存暂停状态。请检查本机连接记录。"; return }
         status = "已暂停；已有事项、个人备注和完成状态保留。"
     }
     func handleWake() async {
-        guard started, enabled else { return }
+        guard started, anyEnabled else { return }
         if busy { pendingAutomatic = true; return }
         guard var c = state?.active else { return }
-        let due = c.automaticDue(now: services.now())
-        do { try change { $0 = c } } catch { status = "无法保存检查状态，自动同步已停止。"; enabled = false; return }
-        guard due else { arm(); return }
+        let now = services.now()
+        var reminders = false
+        if enabled {
+            reminders = c.automaticDue(now: now)
+            do { try change { $0 = c } }
+            catch {
+                status = "无法保存检查状态，提醒事项自动同步已停止。"
+                enabled = false; reminders = false
+            }
+        }
+        let events = calendar?.isDue(now: now) == true
+        guard reminders || events else { arm(); return }
         busy = true; defer { finishOperation() }
-        await performSync(token: generation)
+        await performSync(token: generation, reminders: reminders, events: events)
     }
-    private func performSync(token: Int) async {
+    private func performSync(token: Int, reminders: Bool, events: Bool) async {
         guard let c = state?.active, let storeID = state?.storeID else { return }
         do {
-            status = "正在读取并核对课程任务…"
+            if reminders { status = "正在读取并核对课程任务…" }
             try await loadPreview(record: c, token: token)
-            guard valid(token, c.id), enabled, let fresh = preview else { return }
+        } catch {
+            guard valid(token, c.id) else { return }
+            if reminders { recordReminderFailure(error, record: c, token: token) }
+            if events {
+                calendar?.fail(SafeError(services.errorMessage(error)), scope: calendarScope(c),
+                               network: services.networkFailure(error), now: services.now())
+            }
+            return
+        }
+        guard valid(token, c.id), let fresh = preview else { return }
+        if events {
+            calendar?.sync(scope: calendarScope(c), now: services.now()) {
+                let selection = try NativeTaskSelection.select(fresh.candidates)
+                let tasks = try selection.tasks.compactMap { task -> CalendarTask? in
+                    guard let deadline = task.deadline else { return nil }
+                    return try CalendarTask(key: task.identity.stableHash, course: task.courseName, title: task.title,
+                                            deadline: deadline, sourceName: platform.displayName, verifiedHost: fresh.scope.host)
+                }
+                return CalendarProjection(tasks: tasks, skipped: selection.skippedWithoutDeadline)
+            }
+        }
+        guard reminders, enabled else { return }
+        do {
             guard services.authorized() else { throw SafeError("提醒事项权限已关闭，请在系统设置中允许后手动重试。") }
             let history = NativeTaskHistory(scope: fresh.scope, knownHashes: c.knownHashes, hasImported: c.hasImported)
             let (result, hashes) = try await services.write(storeID, fresh, history) { self.valid(token, c.id) && self.enabled }
@@ -182,16 +243,17 @@ struct NativeSourcePreview {
             lastSync = "\(Self.time(now))：新增 \(result.added)，更新 \(result.updated)，跳过首次过期项 \(result.skipped)"
             status = "同步完成。每天北京时间 00:00 更新，错过时唤醒补查。"
             if !result.warnings.isEmpty { status += " " + result.warnings.joined(separator: " ") }
-        } catch {
-            guard valid(token, c.id), enabled else { return }
-            let network = services.networkFailure(error)
-            do { try change { $0.recordFailure(network: network, now: services.now()) } }
-            catch { status = "同步结果无法保存，已暂停本次运行。请检查本机连接记录。"; enabled = false; return }
-            status = services.errorMessage(error) + (network ? " 将有限重试，也可点立即同步。" : " 自动重试已停止，请重新登录或处理后手动同步。")
-        }
+        } catch { recordReminderFailure(error, record: c, token: token) }
+    }
+    private func recordReminderFailure(_ error: Error, record: NativeConnectionState, token: Int) {
+        guard valid(token, record.id), enabled else { return }
+        let network = services.networkFailure(error)
+        do { try change { $0.recordFailure(network: network, now: services.now()) } }
+        catch { status = "同步结果无法保存，已暂停本次运行。请检查本机连接记录。"; enabled = false; return }
+        status = services.errorMessage(error) + (network ? " 将有限重试，也可点立即同步。" : " 自动重试已停止，请重新登录或处理后手动同步。")
     }
     func setRestore(_ value: Bool) async {
-        guard started, !busy, state?.active != nil, !value || enabled else { return }
+        guard started, !busy, state?.active != nil, !value || anyEnabled else { return }
         busy = true; defer { finishOperation() }
         do {
             try change { $0.restoreEnabled = value }
@@ -212,22 +274,33 @@ struct NativeSourcePreview {
     }
     private func arm() {
         scheduler.cancel()
-        guard started, enabled, var c = state?.active else { return }
-        let date = c.nextCheck(now: services.now())
-        do { try change { $0 = c } } catch { enabled = false; status = "无法保存检查状态，自动同步已停止。"; return }
-        if let date {
-            scheduler.schedule(at: date) { [weak self] in Task { @MainActor in await self?.handleWake() } }
+        guard started, anyEnabled, var c = state?.active else { return }
+        let now = services.now()
+        var next = calendar?.nextCheck(now: now)
+        if enabled {
+            let date = c.nextCheck(now: now)
+            do {
+                try change { $0 = c }
+                if let date { next = next.map { min($0, date) } ?? date }
+            } catch {
+                enabled = false
+                status = "无法保存检查状态，提醒事项自动同步已停止。"
+            }
+        }
+        if let next {
+            scheduler.schedule(at: next) { [weak self] in Task { @MainActor in await self?.handleWake() } }
         }
     }
     private func finishOperation() {
         busy = false; arm()
-        if pendingAutomatic, started, enabled {
+        if pendingAutomatic, started, anyEnabled {
             pendingAutomatic = false
             Task { @MainActor [weak self] in await self?.handleWake() }
         }
     }
     func stop() {
         started = false; generation += 1; enabled = false; pendingAutomatic = false
+        calendar?.stop()
         scheduler.cancel(); services.close()
         // A normal quit preserves persisted enable/restore intent.
     }

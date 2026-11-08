@@ -38,3 +38,37 @@ jobs:
         run: ./scripts/build-app.sh
       - name: Verify Apple Silicon application architecture
         run: test "$(/usr/bin/lipo -archs build/DueBridge.app/Contents/MacOS/DueBridge)" = arm64
+  windows-tests-and-build:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: ga
+      - name: Test BB parsing and shared deadline rules
+        run: dotnet run --configuration Release --project Windows/DueBridge.Core.Tests
+      - name: Test school adapters without accounts
+        run: |
+          dotnet run --configuration Release --project Windows/DueBridge.School.Tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test Windows/DueBridge.School.Tests/SchoolBridge.test.cjs
+      - name: Test Outlook writes and retry recovery
+        run: dotnet run --configuration Release --project Windows/DueBridge.Outlook.Tests
+      - name: Build self-contained Windows x64 app
+        run: dotnet publish Windows/DueBridge.Windows --configuration Release --runtime win-x64 --self-contained true --output build/windows
+      - name: Verify Windows executable architecture
+        shell: pwsh
+        run: |
+          $bytes = [IO.File]::ReadAllBytes("build/windows/DueBridge.exe")
+          $offset = [BitConverter]::ToInt32($bytes, 60)
+          if ([BitConverter]::ToUInt32($bytes, $offset) -ne 0x4550 -or
+              [BitConverter]::ToUInt16($bytes, $offset + 4) -ne 0x8664) {
+              throw "Expected an x64 PE executable."
+          }

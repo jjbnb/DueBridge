@@ -3,6 +3,9 @@
 APP_SOURCES=(
   Sources/App.swift
   Sources/AppSyncCoordinator.swift
+  Sources/CalendarDestinationView.swift
+  Sources/CalendarEventWriter.swift
+  Sources/CalendarSync.swift
   Sources/Countdown.swift
   Sources/Course.swift
   Sources/DailySchedule.swift

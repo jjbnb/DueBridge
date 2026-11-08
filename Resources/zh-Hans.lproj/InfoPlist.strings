@@ -2,3 +2,4 @@
 "CFBundleName" = "归期 · DueBridge";
 "NSRemindersFullAccessUsageDescription" = "将你预览并启用的课程截止任务同步到你明确选择的提醒事项列表，保留手动完成状态和个人备注。";
 "NSRemindersUsageDescription" = "将你启用的课程截止任务同步到你选择的提醒事项列表。";
+"NSCalendarsFullAccessUsageDescription" = "将你预览并启用的课程截止任务同步到你选择账户中的专用日历。";

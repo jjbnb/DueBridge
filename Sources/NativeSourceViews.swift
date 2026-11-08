@@ -7,14 +7,20 @@ import SwiftUI
         TabView {
             DeadlineOverview(model: model, clock: clock)
                 .tabItem { Label("全部截止事项", systemImage: "list.bullet") }
-            MainView(controller: model.bb, previewClock: clock)
-                .tabItem { Text("BB") }
+            ScrollView {
+                MainView(controller: model.bb, previewClock: clock)
+            }.tabItem { Text("BB") }
             ForEach(model.nativeSources, id: \.platform.rawValue) { source in
-                NativeSourceView(controller: source, clock: clock)
-                    .tabItem { Text(source.platform.displayName) }
+                ScrollView {
+                    NativeSourceView(controller: source, clock: clock)
+                }.tabItem { Text(source.platform.displayName) }
             }
             ReminderDestinationView(model: model.destination, busy: model.isBusy)
                 .tabItem { Label("提醒事项列表", systemImage: "checklist") }
+            CalendarDestinationView(model: model.calendarDestination,
+                                    hasPreview: model.bb.preview != nil || model.nativeSources.contains { $0.preview != nil },
+                                    sourceBusy: model.bb.busy || model.nativeSources.contains(where: \.busy))
+                .tabItem { Label("苹果日历", systemImage: "calendar") }
         }.padding(8)
     }
 }
@@ -30,13 +36,13 @@ import SwiftUI
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(controller.platform.displayName).font(.title2.bold())
-                    Text("只同步有明确截止时间的课程任务；请先在“提醒事项列表”页选择同步位置。")
+                    Text("先预览有明确截止时间的任务，再选择提醒事项列表或苹果日历。")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(controller.enabled ? "同步已启用" : "未启用 / 已暂停")
+                Text(controller.anyEnabled ? "同步已启用" : "未启用 / 已暂停")
                     .font(.caption.bold()).padding(7)
-                    .background(controller.enabled ? Color.green.opacity(0.13) : Color.gray.opacity(0.12), in: Capsule())
+                    .background(controller.anyEnabled ? Color.green.opacity(0.13) : Color.gray.opacity(0.12), in: Capsule())
             }
             Text("连接会在本机保存本平台的登录状态，用于以后检查。请只在学校登录窗口输入密码。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -65,7 +71,7 @@ import SwiftUI
                     VStack(spacing: 8) {
                         Image(systemName: "person.crop.circle.badge.checkmark").font(.largeTitle).foregroundStyle(.secondary)
                         Text(controller.waitingForLogin ? "完成学校登录后，点击上方读取课程" : "连接后可在这里核对课程和截止时间")
-                        Text("读取预览不会写入提醒事项。")
+                        Text("读取预览不会写入。")
                             .font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if tasks.isEmpty {
@@ -85,24 +91,29 @@ import SwiftUI
             .frame(minHeight: 180, maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2)))
-            Text("按截止时间先后显示；无截止时间的任务跳过。首次不新增往日任务，已完成状态和个人备注保留。")
+            Text("按截止时间先后显示；无截止时间的任务跳过。首次不新增往日任务；提醒事项的完成状态和个人备注保留。")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
+            Label("提醒事项", systemImage: "checklist").font(.headline)
             Text(controller.status).font(.callout).textSelection(.enabled)
             Text(controller.lastSync).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             HStack {
                 Button("启用同步到提醒事项") { Task { await controller.enable() } }
                     .buttonStyle(.borderedProminent).disabled(!controller.canEnable)
-                Button("立即同步") { Task { await controller.manualSync() } }
+                Button("立即同步提醒事项") { Task { await controller.manualSync() } }
                     .disabled(!controller.enabled || controller.busy)
-                Button("暂停") { controller.pause() }
+                Button(controller.waitingForLogin ? "取消连接" : "暂停提醒事项") { controller.pause() }
                     .disabled(!controller.enabled && !controller.waitingForLogin)
                 Spacer()
+            }
+            if let calendar = controller.calendar {
+                CalendarSourceControls(calendar: calendar, busy: controller.busy, canEnable: !controller.busy && controller.preview != nil,
+                                       enable: controller.enableCalendar, sync: controller.manualSyncCalendar, pause: controller.pauseCalendar)
             }
             HStack {
                 Button(controller.restoreEnabled ? "关闭本平台登录恢复" : "开启本平台登录恢复") {
                     Task { await controller.setRestore(!controller.restoreEnabled) }
-                }.disabled(controller.busy || (!controller.restoreEnabled && !controller.enabled))
+                }.disabled(controller.busy || (!controller.restoreEnabled && !controller.anyEnabled))
                 Spacer()
             }
             Text(controller.restoreStatus).font(.caption).foregroundStyle(.secondary)
@@ -173,9 +184,9 @@ import SwiftUI
             Text("汇总各平台本次读取的预览，按截止时间排序。请在各平台页完成连接和启用。")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
-                sourceStatus("BB", enabled: bb.enabled, busy: bb.busy)
+                sourceStatus("BB", enabled: bb.anyEnabled, busy: bb.busy)
                 ForEach(model.nativeSources, id: \.platform.rawValue) { source in
-                    sourceStatus(source.platform.displayName, enabled: source.enabled, busy: source.busy)
+                    sourceStatus(source.platform.displayName, enabled: source.anyEnabled, busy: source.busy)
                 }
             }
             if rows.isEmpty {

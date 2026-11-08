@@ -1,0 +1,12 @@
+{
+  "now": "2026-11-14T12:00:00Z",
+  "originalIcs": "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:20261101T010000Z-_blackboard.platform.gradebook2.GradableItem-_111_1@learn.intl.zju.edu.cn\nSEQUENCE:1\nDTSTART:20261116T155900Z\nSUMMARY:合成定时作业\nEND:VEVENT\nBEGIN:VEVENT\nUID:20261101T010000Z-_blackboard.platform.gradebook2.GradableItem-_222_1@learn.intl.zju.edu.cn\nDTSTART;VALUE=DATE:20261117\nSUMMARY:合成全天作业\nEND:VEVENT\nEND:VCALENDAR\n",
+  "rescheduledIcs": "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:20261102T010000Z-_blackboard.platform.gradebook2.GradableItem-_111_1@learn.intl.zju.edu.cn\nSEQUENCE:2\nDTSTART:20261118T140000Z\nSUMMARY:合成定时作业\nEND:VEVENT\nBEGIN:VEVENT\nUID:20261101T010000Z-_blackboard.platform.gradebook2.GradableItem-_222_1@learn.intl.zju.edu.cn\nDTSTART;VALUE=DATE:20261117\nSUMMARY:合成全天作业\nEND:VEVENT\nEND:VCALENDAR\n",
+  "courseName": "合成课程",
+  "timedKey": "25982c39a62fddc0a81b589e7da224cf67b61514263e7c0cd9d7750dca9a1986",
+  "allDayKey": "65ee7aa90a925ff8cceeb79df82807ad61b33cd32106565ff27cac77c5dc9058",
+  "timedDueUtc": "2026-11-16T15:59:00Z",
+  "rescheduledDueUtc": "2026-11-18T14:00:00Z",
+  "allDay": "2026-11-17",
+  "expectedTimedTitle": "【合成课程】合成定时作业 · 截止"
+}

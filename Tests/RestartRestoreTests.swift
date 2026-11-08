@@ -45,6 +45,18 @@ import Foundation
     func schedule(at date: Date, action: @escaping () -> Void) { self.date = date; callback = action }
     func cancel() { date = nil; callback = nil }
 }
+@MainActor final class TestCalendarDestination: CalendarEventDestination {
+    var identifier: String? = "dedicated-test-calendar"
+    var failure: Error?
+    var successfulWrites = 0
+    func requireWritable() throws -> String { identifier! }
+    func reconcile(scope: CalendarScope, projection: CalendarProjection, checkpoint: CalendarCheckpoint,
+                   now: Date, persistPending: (CalendarCheckpoint) throws -> Void) throws -> (SyncResult, CalendarCheckpoint) {
+        if let failure { throw failure }
+        successfulWrites += 1
+        return (SyncResult(added: 0, updated: 0, skipped: 0, warnings: []), checkpoint)
+    }
+}
 @MainActor final class Fixture {
     // Intentionally fake hex credential, never a user's private subscription.
     let address = "https://learn.intl.zju.edu.cn/webapps/calendar/calendarFeed/synthetic-feed-example-a/learn.ics"
@@ -65,7 +77,7 @@ import Foundation
     var suspendedFetch: CheckedContinuation<Feed, Error>?
     var suspendFetch = false
     let feed = Feed(events: [], warnings: [])
-    func controller() -> SyncController {
+    func controller(calendar: CalendarSourceSync? = nil) -> SyncController {
         let services = SyncServices(fetch: { address in
             self.fetched.append(address)
             if self.suspendFetch { return try await withCheckedThrowingContinuation { self.suspendedFetch = $0 } }
@@ -83,7 +95,7 @@ import Foundation
             self.commits += 1
             return SyncResult(added: 0, updated: 0, skipped: 0, warnings: [])
         }, now: { self.now }, loadCourses: { [:] }, saveCourses: { _ in }, scheduler: scheduler)
-        return SyncController(services: services, restore: RestartRestore(settings: settings, vault: vault, login: login))
+        return SyncController(services: services, restore: RestartRestore(settings: settings, vault: vault, login: login), calendar: calendar)
     }
     func configured(lastSuccess: Date? = nil) {
         vault.value = address
@@ -408,6 +420,199 @@ import Foundation
         check(summary.settings.record?.desiredEnabled == false && summaryController.restoreStatus.contains("自动同步已暂停"), "source edit refreshes saved pause summary immediately")
         summaryController.stop()
 
+        await calendarRegressions()
+        await calendarSourceRecoveryRegressions()
+        await calendarSaveKeepsRemindersRegressions()
+        await calendarStartupPauseRegression()
         print("Restart restore: \(checks) checks passed")
     }
+
+    @MainActor static func calendarRegressions() async {
+        let suite = "DueBridge.RestartRestoreTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let destination = TestCalendarDestination()
+        let fixture = Fixture()
+        fixture.authorized = false
+        let first = fixture.controller(calendar: CalendarSourceSync(destination: destination, defaults: defaults))
+        await first.start()
+        first.source = fixture.address
+        await first.readPreview()
+        await first.enableCalendar()
+        check(first.calendarEnabled && destination.successfulWrites == 1 && fixture.requests == 0 && fixture.commits == 0,
+              "Calendar-only enable uses BB without requesting Reminders access")
+        await first.saveForRestart()
+        check(fixture.settings.record?.desiredEnabled == false, "Calendar-only startup does not consent to Reminders")
+        first.stop()
+        let next = fixture.controller(calendar: CalendarSourceSync(destination: destination, defaults: defaults))
+        await next.start()
+        check(next.calendarEnabled && !next.enabled && destination.successfulWrites == 1 && fixture.requests == 0,
+              "same-day Calendar restore deduplicates without Reminders permission")
+
+        fixture.authorized = true
+        await next.readPreview()
+        await next.enable()
+        check(next.enabled && fixture.commits == 1, "Reminders can be enabled independently")
+        fixture.now.addTimeInterval(86400)
+        destination.failure = SafeError("calendar failure")
+        let reads = fixture.fetched.count
+        await next.handleWake()
+        check(fixture.fetched.count == reads + 1 && fixture.commits == 2 && destination.successfulWrites == 1,
+              "one shared source read feeds both destinations and Calendar failure preserves Reminders success")
+        check(next.calendar?.status.contains("calendar failure") == true &&
+              fixture.settings.record?.lastSuccess == fixture.now, "destination status and last success remain independent")
+        destination.failure = nil
+        await next.manualSyncCalendar()
+        check(fixture.commits == 2 && destination.successfulWrites == 2, "retrying Calendar does not replay Reminders")
+        await next.handleWake()
+        check(fixture.commits == 2 && destination.successfulWrites == 2, "wake skips both successful destinations on the same day")
+
+        fixture.now.addTimeInterval(86400)
+        fixture.writeFailure = SafeError("reminder failure")
+        let oldReminderSuccess = fixture.settings.record?.lastSuccess
+        await next.handleWake()
+        check(fixture.commits == 2 && destination.successfulWrites == 3 && fixture.settings.record?.lastSuccess == oldReminderSuccess,
+              "Reminders failure preserves the Calendar commit and does not advance Reminders last success")
+        fixture.writeFailure = nil
+        await next.manualSync()
+        check(fixture.commits == 3 && destination.successfulWrites == 3, "retrying Reminders does not replay Calendar")
+        next.pauseCalendar()
+        check(next.enabled && !next.calendarEnabled && fixture.settings.record?.desiredEnabled == true,
+              "pausing Calendar leaves Reminders consent enabled")
+        next.stop()
+    }
+
+    @MainActor static func calendarSourceRecoveryRegressions() async {
+        let suite = "DueBridge.CalendarSourceRecoveryTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let destination = TestCalendarDestination()
+        let fixture = Fixture()
+        let calendar = CalendarSourceSync(destination: destination, defaults: defaults)
+        let controller = fixture.controller(calendar: calendar)
+        await controller.start()
+        controller.source = fixture.address
+        await controller.readPreview()
+        await controller.enableCalendar()
+        await controller.saveForRestart()
+        controller.pauseCalendar()
+        controller.source = fixture.alternate
+        await controller.readPreview()
+        await controller.enableCalendar()
+        let alternateScope = try! CalendarScope.bb(fingerprint: CalendarScope.bbFingerprint(address: fixture.alternate))
+        let writesBeforeRestore = destination.successfulWrites
+        let savedScope = try! CalendarScope.bb(fingerprint: CalendarScope.bbFingerprint(address: fixture.address))
+        calendar.sync(scope: savedScope, now: fixture.now) {
+            preconditionFailure("A Calendar scope mismatch must stop before projecting or writing")
+        }
+        fixture.now.addTimeInterval(86400)
+        await controller.recoverSavedSource()
+        check(controller.source == fixture.address && controller.preview == nil &&
+              !controller.calendarEnabled && !controller.enabled && fixture.scheduler.date == nil,
+              "recovering saved BB link clears the other link’s preview and destination bindings")
+        await controller.manualSyncCalendar()
+        await controller.handleWake()
+        check(destination.successfulWrites == writesBeforeRestore && calendar.savedIntent(scope: alternateScope),
+              "recovering a paused BB link does not write into the other link’s Calendar scope or erase its intent")
+
+        await controller.readPreview()
+        await controller.enableCalendar()
+        await controller.enable()
+        await controller.saveForRestart()
+        controller.pause()
+        let remindersBeforeRecovery = fixture.commits
+        let permissionsBeforeRecovery = fixture.requests
+        fixture.authorized = false
+        await controller.recoverSavedSource()
+        check(controller.calendarEnabled && !controller.enabled && fixture.commits == remindersBeforeRecovery &&
+              fixture.requests == permissionsBeforeRecovery,
+              "recovering saved Calendar intent preserves an explicitly paused Reminders destination")
+        controller.stop()
+    }
+
+    @MainActor static func calendarSaveKeepsRemindersRegressions() async {
+        let suite = "DueBridge.CalendarSaveTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let destination = TestCalendarDestination()
+        let fixture = Fixture()
+        func controller() -> SyncController {
+            fixture.controller(calendar: CalendarSourceSync(destination: destination, defaults: defaults))
+        }
+        let first = controller()
+        await first.start()
+        first.source = fixture.address
+        await first.readPreview()
+        await first.enable()
+        await first.enableCalendar()
+        await first.saveForRestart()
+        let lastReminderSuccess = fixture.settings.record?.lastSuccess
+        check(lastReminderSuccess == fixture.now && fixture.settings.record?.desiredEnabled == true,
+              "both destinations initially save valid independent success and intent")
+        first.stop()
+
+        fixture.authorized = false
+        fixture.now.addTimeInterval(86400)
+        let next = controller()
+        await next.start()
+        check(next.calendarEnabled && !next.enabled && next.canSaveForRestart,
+              "Calendar remains active when the saved Reminders authorization is unavailable")
+        await next.saveForRestart()
+        check(fixture.settings.record?.desiredEnabled == true && fixture.settings.record?.lastSuccess == lastReminderSuccess,
+              "saving Calendar while Reminders is unauthorized preserves its saved intent and last success")
+        next.pause()
+        await next.saveForRestart()
+        check(fixture.settings.record?.desiredEnabled == false && fixture.settings.record?.lastSuccess == lastReminderSuccess,
+              "saving Calendar after an explicit Reminders pause keeps the pause and prior success")
+        next.stop()
+    }
+
+    @MainActor static func calendarStartupPauseRegression() async {
+        let suite = "DueBridge.CalendarStartupPauseTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let destination = TestCalendarDestination()
+        let fixture = Fixture()
+        func controller() -> SyncController {
+            fixture.controller(calendar: CalendarSourceSync(destination: destination, defaults: defaults))
+        }
+        let first = controller()
+        await first.start()
+        let alias = "  " + fixture.address.replacingOccurrences(of: "https://learn.intl.zju.edu.cn/", with: "HTTPS://LEARN.INTL.ZJU.EDU.CN:443/") + "  "
+        let canonical = try! CalendarScope.bbFingerprint(address: fixture.address)
+        check(try! CalendarScope.bbFingerprint(address: alias) == canonical, "equivalent validated BB URLs share Calendar scope")
+        let escapedQuery = try! CalendarScope.bbFingerprint(address: alias.trimmingCharacters(in: .whitespaces) + "?q=%2B")
+        let literalQuery = try! CalendarScope.bbFingerprint(address: fixture.address + "?q=+")
+        check(escapedQuery != literalQuery, "Calendar scope preserves encoded query bytes")
+        first.source = alias
+        await first.readPreview()
+        await first.enableCalendar()
+        await first.saveForRestart()
+        check(fixture.settings.record?.calendarScopeFingerprint == canonical &&
+              fixture.settings.record?.fingerprint == RestartRestore.fingerprint(alias),
+              "save stores canonical Calendar scope separately from the unchanged raw Reminders binding")
+        first.stop()
+
+        fixture.vault.suspendRead = true
+        let next = controller()
+        let startup = Task { await next.start() }
+        while fixture.vault.suspended == nil { await Task.yield() }
+        next.pauseCalendar()
+        next.pause()
+        fixture.vault.suspended?.resume(returning: alias)
+        fixture.vault.suspended = nil
+        await startup.value
+        check(!next.calendarEnabled && !next.enabled && fixture.scheduler.date == nil,
+              "global pause cancels a Calendar restore while the BB vault read is pending")
+        next.stop()
+
+        fixture.vault.suspendRead = false
+        let readCount = fixture.vault.reads.count
+        let paused = controller()
+        await paused.start()
+        check(!paused.calendarEnabled && fixture.vault.reads.count == readCount && destination.successfulWrites == 1,
+              "global pause persists Calendar consent even before its runtime scope is bound")
+        paused.stop()
+    }
+
 }

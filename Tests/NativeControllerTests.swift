@@ -13,6 +13,16 @@ import Foundation
     func unregister() async throws { claimed = false }
     func openSettings() {}
 }
+@MainActor final class NativeCalendarProbe: CalendarEventDestination {
+    var identifier: String? = "native-calendar-test"
+    var received = [(CalendarScope, CalendarProjection)]()
+    func requireWritable() throws -> String { identifier! }
+    func reconcile(scope: CalendarScope, projection: CalendarProjection, checkpoint: CalendarCheckpoint,
+                   now: Date, persistPending: (CalendarCheckpoint) throws -> Void) throws -> (SyncResult, CalendarCheckpoint) {
+        received.append((scope, projection))
+        return (SyncResult(added: 1, updated: 0, skipped: projection.skipped, warnings: []), checkpoint)
+    }
+}
 struct NativeControllerTestNetwork: Error {}
 struct NativeControllerTestIdentity: Error {}
 @main struct NativeControllerTests {
@@ -83,8 +93,68 @@ struct NativeControllerTestIdentity: Error {}
             controller.stop()
         }
     }
+    @MainActor static func calendarRegressions() async throws {
+        let suite = "DueBridge.NativeControllerTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        for platform in [NativePlatform.mo, .learningInZJU] {
+            var memory = [String: Data]()
+            let store = NativeStateStore(read: { memory[$0] }, write: { memory[$0] = $1 })
+            let scheduler = NativeTestScheduler(), login = NativeTestLogin()
+            let destination = NativeCalendarProbe()
+            let account = String(repeating: "a", count: 64)
+            let now = ISO8601DateFormatter().date(from: "2026-11-03T00:00:00Z")!
+            var verified = 0, accesses = 0, reminderWrites = 0, collections = 0
+            let services = NativeSourceServices(openLogin: { _ in }, finishLogin: { _ in account },
+                verify: { _, fingerprint in
+                    check(fingerprint == account, "calendar restore verifies the connected account")
+                    verified += 1
+                }, collect: { _, scope, fingerprint in
+                    collections += 1
+                    let identity = try NativeTaskIdentity(scope: scope, courseID: "course", kind: .homework, taskID: "task")
+                    let deadline = try NativeDeadlineParser.parse("2026-12-31T23:59:00+08:00", naiveTimeZone: DailySchedule.timeZone)
+                    let task = try NativeDeadlineTask(identity: identity, courseName: "课程", title: "任务", deadline: deadline)
+                    return NativeSourcePreview(scope: scope, accountFingerprint: fingerprint, candidates: [task], courseCount: 1)
+                }, requestAccess: { accesses += 1 }, authorized: { false },
+                write: { _, _, _, _ in
+                    reminderWrites += 1
+                    return (SyncResult(added: 0, updated: 0, skipped: 0, warnings: []), [])
+                }, cancel: {}, close: {}, now: { now }, networkFailure: { _ in false }, errorMessage: { _ in "无法读取" })
+            func controller() -> NativeSourceController {
+                NativeSourceController(platform: platform, store: store, services: services, scheduler: scheduler, login: login,
+                    calendar: CalendarSourceSync(destination: destination, defaults: defaults))
+            }
+            let first = controller()
+            await first.start()
+            first.beginConnect()
+            await first.finishConnect()
+            check(destination.received.isEmpty && collections == 1, "native preview collects without writing")
+            await first.enableCalendar()
+            check(first.calendarEnabled && !first.enabled && accesses == 0 && reminderWrites == 0 && collections == 2,
+                  "native Calendar enable runs a fresh collect without Reminders authorization")
+            let preview = first.preview!
+            let received = destination.received.first!
+            check(received.0.key == platform.rawValue + "-" + preview.scope.connectionID.uuidString.lowercased() &&
+                  received.1.tasks.first?.key == preview.candidates.first?.identity.stableHash &&
+                  received.1.tasks.first?.title == "【课程】任务 · 截止" &&
+                  received.1.tasks.first?.link?.host == platform.verifiedHost, "native Calendar ownership binds verified account and task")
+            await first.setRestore(true)
+            first.stop()
+            let restored = controller()
+            await restored.start()
+            check(restored.calendarEnabled && !restored.enabled && verified == 1 && collections == 2 && destination.received.count == 1,
+                  "native Calendar-only restore verifies binding without replaying a same-day success")
+            restored.pauseCalendar()
+            restored.stop()
+            let paused = controller()
+            await paused.start()
+            check(!paused.calendarEnabled && verified == 1, "native pause persists Calendar-only consent")
+            paused.stop()
+        }
+    }
     @MainActor static func main() async throws {
         try await restoreRegressions()
+        try await calendarRegressions()
         var memory = [String: Data]()
         let store = NativeStateStore(read: { memory[$0] }, write: { memory[$0] = $1 })
         let fingerprint = String(repeating: "a", count: 64)

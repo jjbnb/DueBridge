@@ -70,13 +70,16 @@ extension NativeSourceServices {
     let bb: SyncController
     let nativeSources: [NativeSourceController]
     let destination = ReminderDestinationModel()
+    let calendarDestination: CalendarDestinationModel
     private let coordinator: AppSyncCoordinator
     private var observations = Set<AnyCancellable>()
-    var isBusy: Bool { bb.busy || nativeSources.contains(where: \.busy) }
-    var isEnabled: Bool { bb.enabled || nativeSources.contains(where: \.enabled) }
+    var isBusy: Bool { calendarDestination.busy || bb.busy || nativeSources.contains(where: \.busy) }
+    var isEnabled: Bool { bb.anyEnabled || nativeSources.contains(where: \.anyEnabled) }
 
     init() {
         let defaults = UserDefaults.standard
+        let calendarDestination = CalendarDestinationModel(defaults: defaults)
+        self.calendarDestination = calendarDestination
         let states = NativeStateStore(read: { defaults.data(forKey: $0) }, write: { defaults.set($1, forKey: $0) })
         let descriptors = SourceRegistry.production.nativeDescriptors
         var claims = Set<String>()
@@ -92,14 +95,20 @@ extension NativeSourceServices {
         let schedules = AppSyncCoordinator(scheduler: DailySyncScheduler())
         coordinator = schedules
         bb = SyncController(services: .live(gate: gate, scheduler: schedules.slot("bb"), readGate: readGate),
-                            restore: .live(login: login.facade("bb")))
+                            restore: .live(login: login.facade("bb")),
+                            calendar: CalendarSourceSync(destination: calendarDestination, defaults: defaults))
         nativeSources = descriptors.compactMap { descriptor in
             guard let platform = descriptor.nativePlatform else { return nil }
             return NativeSourceController(platform: platform, store: states,
                 services: .live(platform: platform, gate: gate, readGate: readGate),
-                scheduler: schedules.slot(descriptor.runtimeSlot), login: login.facade(descriptor.runtimeSlot))
+                scheduler: schedules.slot(descriptor.runtimeSlot), login: login.facade(descriptor.runtimeSlot),
+                calendar: CalendarSourceSync(destination: calendarDestination, defaults: defaults))
         }
         bb.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &observations)
+        calendarDestination.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &observations)
+        for calendar in [bb.calendar] + nativeSources.map(\.calendar) {
+            calendar?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &observations)
+        }
         for source in nativeSources {
             source.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &observations)
         }
@@ -117,10 +126,13 @@ extension NativeSourceServices {
         }
     }
     func syncNow() async {
-        await bb.manualSync()
-        for source in nativeSources { await source.manualSync() }
+        await bb.syncAllNow()
+        for source in nativeSources { await source.syncAllNow() }
     }
-    func pause() { bb.pause(); nativeSources.forEach { $0.pause() } }
+    func pause() {
+        bb.pauseCalendar(); bb.pause()
+        for source in nativeSources { source.pauseCalendar(); source.pause() }
+    }
     func refreshLoginStatus() { bb.refreshLoginStatus(); nativeSources.forEach { $0.refreshLoginStatus() } }
     func stop() { bb.stop(); nativeSources.forEach { $0.stop() }; coordinator.stop() }
 }

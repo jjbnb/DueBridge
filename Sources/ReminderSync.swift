@@ -261,9 +261,8 @@ final class SyncController: ObservableObject {
     @Published var source = "" {
         didSet {
             guard source != oldValue, !restoringSource else { return }
-            preview = nil; previewAddress = nil
-            invalidateOperation()
-            enabled = false; activeAddress = nil; lastSuccessfulSync = nil
+            calendar?.pause()
+            clearRuntimeSource()
             restore.setIntent(false)
             updateRestoreStatus()
             armDailyTimer()
@@ -281,6 +280,7 @@ final class SyncController: ObservableObject {
     @Published private(set) var canRecover = false
     private let services: SyncServices
     private let restore: RestartRestore
+    let calendar: CalendarSourceSync?
     private var previewAddress: String?
     private var activeAddress: String?
     private var started = false
@@ -295,11 +295,24 @@ final class SyncController: ObservableObject {
     private var sessionRetry: RetryCheckpoint?
     private var sessionBlocked = false
     var canEnable: Bool { !busy && preview != nil && previewAddress == source && !enabled }
-    var canSaveForRestart: Bool { !busy && enabled && preview != nil && previewAddress == source && activeAddress == source }
+    var canSaveForRestart: Bool {
+        !busy && preview != nil && previewAddress == source && ((enabled && activeAddress == source) || calendarEnabled)
+    }
+    var calendarEnabled: Bool { calendar?.enabled == true }
+    var anyEnabled: Bool { enabled || calendarEnabled }
+    var canEnableCalendar: Bool { !busy && preview != nil && previewAddress == source && !calendarEnabled }
+    private func savedCalendarScope(_ metadata: RestartMetadata?) -> CalendarScope? {
+        guard let fingerprint = metadata?.calendarScopeFingerprint, CalendarOwnership.hash(fingerprint) else { return nil }
+        return .bb(fingerprint: fingerprint)
+    }
+    private func hasSavedCalendarIntent(_ metadata: RestartMetadata?) -> Bool {
+        guard let scope = savedCalendarScope(metadata) else { return false }
+        return calendar?.savedIntent(scope: scope) == true
+    }
     var restartConfigured: Bool { restore.configured }
 
-    init(services: SyncServices, restore: RestartRestore) {
-        self.services = services; self.restore = restore
+    init(services: SyncServices, restore: RestartRestore, calendar: CalendarSourceSync? = nil) {
+        self.services = services; self.restore = restore; self.calendar = calendar
         courseNames = services.loadCourses()
     }
     func courseName(for event: FeedEvent) -> String? { CourseAssignments.name(for: event, in: courseNames) }
@@ -320,7 +333,8 @@ final class SyncController: ObservableObject {
         guard !started else { return }; started = true
         guard restore.configured else { return }
         refreshLoginStatus()
-        guard restore.metadata?.desiredEnabled == true else {
+        guard let metadata = restore.metadata,
+              metadata.desiredEnabled || hasSavedCalendarIntent(metadata) else {
             restoreStatus = "已保存恢复设置；自动同步已暂停。重新启用前请读取日历，或点“恢复已保存链接”。"
             canRecover = true
             return
@@ -334,7 +348,9 @@ final class SyncController: ObservableObject {
     }
     private func updateRestoreStatus() {
         guard restore.configured else { restoreStatus = "本次运行模式：退出后需重新填写链接。"; return }
-        let prefix = restore.metadata?.desiredEnabled == true ? "链接已保存，可在重开应用后恢复。" : "链接已保存；自动同步已暂停。"
+        let metadata = restore.metadata
+        let calendarIntent = hasSavedCalendarIntent(metadata)
+        let prefix = metadata?.desiredEnabled == true || calendarIntent ? "链接已保存，可在重开应用后恢复。" : "链接已保存；自动同步已暂停。"
         switch loginAvailability {
         case .enabled: restoreStatus = prefix + "登录启动已就绪。"
         case .requiresApproval: restoreStatus = prefix + "登录启动仍需在系统设置中批准。"
@@ -347,7 +363,7 @@ final class SyncController: ObservableObject {
         await restoreSavedSource(interactive: true)
     }
     private func restoreSavedSource(interactive: Bool) async {
-        guard !busy, restore.configured else { return }
+        guard !busy, let metadata = restore.metadata else { return }
         let token = generation
         busy = true; canRecover = false
         status = "正在恢复已保存的链接…"
@@ -357,29 +373,47 @@ final class SyncController: ObservableObject {
             let task = Task { try await vault.read(interactive: interactive) }; credentialTask = task
             let address = try await task.value
             credentialTask = nil
-            guard started, generation == token, restore.configured,
-                  interactive || restore.metadata?.desiredEnabled == true else { return }
-            _ = try FeedAddress.validate(address)
+            guard started, generation == token, restore.configured else { return }
+            let scope = try CalendarScope.bb(fingerprint: CalendarScope.bbFingerprint(address: address))
             guard restore.metadata?.fingerprint == RestartRestore.fingerprint(address) else { throw RestoreFailure.invalid }
-            if interactive && !services.authorized() {
-                status = "正在重新确认提醒事项授权…"
-                try await services.requestAccess()
-                // A system permission sheet yields the actor. Pause, editing
-                // the source, or quitting must still cancel this restoration.
-                guard started, generation == token, restore.configured,
-                      restore.metadata?.fingerprint == RestartRestore.fingerprint(address) else { return }
+            let wantsCalendar = calendar?.savedIntent(scope: scope) == true
+            let wantsReminders = metadata.desiredEnabled || (interactive && !wantsCalendar && metadata.remindersConfigured != false)
+            var reminderError: Error?
+            if wantsReminders {
+                do {
+                    if interactive && !services.authorized() {
+                        status = "正在重新确认提醒事项授权…"
+                        try await services.requestAccess()
+                        guard started, generation == token, restore.metadata?.fingerprint == metadata.fingerprint else { return }
+                    }
+                    guard services.authorized() else { throw SafeError("提醒事项权限未开启。请在系统设置中允许，再点“恢复已保存链接”。") }
+                } catch {
+                    guard started, generation == token else { return }
+                    reminderError = error
+                    if !wantsCalendar { throw error }
+                }
             }
-            guard services.authorized() else { throw SafeError("提醒事项权限未开启。请在系统设置中允许，再点“恢复已保存链接”。") }
-            restoringSource = true; source = address; restoringSource = false
-            activeAddress = address; enabled = true; restore.setIntent(true)
-            lastSuccessfulSync = restore.validatedSuccess(address: address, now: services.now())
-            if let date = lastSuccessfulSync {
-                lastSync = "上次成功同步：" + DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .short)
+            if source != address {
+                clearRuntimeSource()
+                restoringSource = true; source = address; restoringSource = false
             }
-            status = "已恢复同步；每天北京时间 00:00 检查，错过时唤醒补查。"
+            if wantsCalendar { calendar?.restore(scope: scope) }
+            if wantsReminders, reminderError == nil {
+                activeAddress = address; enabled = true; restore.setIntent(true)
+                lastSuccessfulSync = restore.validatedSuccess(address: address, now: services.now())
+                if let date = lastSuccessfulSync {
+                    lastSync = "上次成功同步：" + DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .short)
+                }
+                status = "已恢复提醒事项同步；每天北京时间 00:00 检查，错过时唤醒补查。"
+            } else if let reminderError {
+                canRecover = true
+                status = "提醒事项恢复未完成。" + recoveryMessage(reminderError)
+            } else {
+                status = "已恢复 BB 链接。"
+            }
             updateRestoreStatus()
             await performAutomaticCheck()
-            if restore.metadata?.blockedDay != nil {
+            if enabled && restore.metadata?.blockedDay != nil {
                 status = "已恢复链接；上次同步遇到日历或权限问题，自动重试已停止。请处理后点“立即同步”。"
             }
         } catch {
@@ -394,13 +428,18 @@ final class SyncController: ObservableObject {
         let address = source, token = generation
         busy = true; defer { finishOperation() }
         do {
-            _ = try FeedAddress.validate(address)
+            let calendarFingerprint = try CalendarScope.bbFingerprint(address: address)
             try await restore.vault.save(address)
-            guard valid(token, address) else { return }
-            let sameSource = restore.metadata?.fingerprint == RestartRestore.fingerprint(address)
-            let retry = sameSource ? restore.metadata?.retry : sessionRetry
-            let blocked = sameSource ? restore.metadata?.blockedDay : (sessionBlocked ? services.now() : nil)
-            restore.configure(address: address, lastSuccess: lastSuccessfulSync, retry: retry, blockedDay: blocked)
+            guard current(token, address), anyEnabled else { return }
+            let saved = restore.metadata
+            let sameSource = saved?.fingerprint == RestartRestore.fingerprint(address)
+            let retry = sameSource ? saved?.retry : sessionRetry
+            let blocked = sameSource ? saved?.blockedDay : (sessionBlocked ? services.now() : nil)
+            let lastSuccess = !enabled && sameSource ? saved?.lastSuccess : lastSuccessfulSync
+            let desiredReminders = enabled || (sameSource && saved?.desiredEnabled == true)
+            let remindersConfigured: Bool? = enabled ? true : (sameSource ? saved?.remindersConfigured : false)
+            restore.configure(address: address, lastSuccess: lastSuccess, retry: retry, blockedDay: blocked,
+                              desiredEnabled: desiredReminders, remindersConfigured: remindersConfigured, calendarScopeFingerprint: calendarFingerprint)
             sessionRetry = nil; sessionBlocked = false
             canRecover = false
             do { loginAvailability = try restore.login.register() }
@@ -425,22 +464,34 @@ final class SyncController: ObservableObject {
         } catch { restoreStatus = "已关闭链接恢复；登录启动未能关闭，请在系统登录项设置中移除应用。" }
     }
     func openLoginSettings() { if restore.configured { restore.login.openSettings() } }
+    private func clearRuntimeSource() {
+        invalidateOperation()
+        preview = nil; previewAddress = nil
+        enabled = false; activeAddress = nil; lastSuccessfulSync = nil
+        lastSync = "尚无实际同步记录"
+        calendar?.stop()
+    }
     private func invalidateOperation() {
         generation += 1; pendingAutomaticCheck = false
         fetchTask?.cancel(); credentialTask?.cancel(); scheduledTask?.cancel()
         services.scheduler.cancel(); sessionRetry = nil; sessionBlocked = false
     }
     func stop() {
-        started = false; invalidateOperation(); enabled = false
+        started = false; invalidateOperation(); enabled = false; calendar?.stop()
         // A normal quit preserves the user's persisted desiredEnabled choice.
     }
     private func armDailyTimer() {
         services.scheduler.cancel()
-        guard started, enabled else { return }
+        guard started, anyEnabled else { return }
         let now = services.now()
-        var next = restore.nextCheck(now: now)
-        if let retry = sessionRetry, retry.cycle == DailySchedule.midnight(for: now),
-           let deadline = retry.deadline, deadline > now { next = min(next, deadline) }
+        var next = calendar?.nextCheck(now: now)
+        if enabled {
+            var reminderNext = restore.nextCheck(now: now)
+            if let retry = sessionRetry, retry.cycle == DailySchedule.midnight(for: now),
+               let deadline = retry.deadline, deadline > now { reminderNext = min(reminderNext, deadline) }
+            next = next.map { min($0, reminderNext) } ?? reminderNext
+        }
+        guard let next else { return }
         services.scheduler.schedule(at: next) { [weak self] in
             guard let self, self.started else { return }
             self.scheduledTask = Task { @MainActor [weak self] in await self?.syncAutomatically() }
@@ -450,7 +501,7 @@ final class SyncController: ObservableObject {
     func handleClockChange() async { await syncAutomatically() }
     private func finishOperation() {
         busy = false; armDailyTimer()
-        if pendingAutomaticCheck, started, enabled {
+        if pendingAutomaticCheck, started, anyEnabled {
             pendingAutomaticCheck = false
             scheduledTask = Task { @MainActor [weak self] in await self?.syncAutomatically() }
         }
@@ -463,14 +514,14 @@ final class SyncController: ObservableObject {
     }
     func readPreview() async {
         guard !busy else { return }
-        busy = true; status = "正在读取日历预览；不会申请提醒事项权限或写入。"
+        busy = true; status = "正在读取日历预览；不会申请写入权限。"
         let address = source, token = generation
         defer { finishOperation() }
         do {
             let feed = try await fetch(address)
             guard generation == token, source == address, started else { return }
             preview = feed; previewAddress = address
-            status = "预览已读取，共 \(feed.events.count) 项；尚未写入提醒事项。"
+            status = "预览已读取，共 \(feed.events.count) 项；尚未写入。"
         } catch { if generation == token { preview = nil; previewAddress = nil; status = safeMessage(error) } }
     }
     func enable() async {
@@ -486,42 +537,82 @@ final class SyncController: ObservableObject {
             activeAddress = address; enabled = true; sessionRetry = nil; sessionBlocked = false
             // A newly entered source cannot reuse a saved credential after restart.
             if restore.metadata?.fingerprint == RestartRestore.fingerprint(address) { restore.setIntent(true) }
-            await performSync(address: address, token: token)
+            await performSync(address: address, token: token, reminders: true, events: false)
         } catch { if generation == token { enabled = false; status = safeMessage(error) } }
     }
+    func enableCalendar() async {
+        guard started, canEnableCalendar, let calendar else { return }
+        let address = source
+        guard let fingerprint = try? CalendarScope.bbFingerprint(address: address),
+              calendar.enable(scope: .bb(fingerprint: fingerprint)) else { return }
+        restore.setCalendarScopeFingerprint(fingerprint, address: address)
+        await manualSyncCalendar()
+        updateRestoreStatus()
+    }
+    func pauseCalendar() {
+        calendar?.pause(savedScope: savedCalendarScope(restore.metadata))
+        if !enabled { invalidateOperation() }
+        updateRestoreStatus()
+        armDailyTimer()
+    }
     func pause() {
-        invalidateOperation(); enabled = false; restore.setIntent(false); updateRestoreStatus()
+        if !calendarEnabled { invalidateOperation() }
+        enabled = false; restore.setIntent(false); updateRestoreStatus()
+        armDailyTimer()
         status = busy ? "已暂停；正在进行的读取不会开始新的写入。" : "已暂停自动同步；已有提醒事项保留。"
     }
-    func manualSync() async {
-        guard started, enabled, !busy, let address = activeAddress else { return }
+    func manualSync() async { await runManual(reminders: enabled, events: false) }
+    func manualSyncCalendar() async { await runManual(reminders: false, events: calendarEnabled) }
+    func syncAllNow() async { await runManual(reminders: enabled, events: calendarEnabled) }
+    private func runManual(reminders: Bool, events: Bool) async {
+        guard started, !busy, reminders || events else { return }
         busy = true; defer { finishOperation() }
-        await performSync(address: address, token: generation)
+        await performSync(address: source, token: generation, reminders: reminders, events: events)
     }
     func syncAutomatically() async {
-        guard started, enabled else { return }
+        guard started, anyEnabled else { return }
         guard !busy else { pendingAutomaticCheck = true; return }
         busy = true; defer { finishOperation() }
         await performAutomaticCheck()
     }
     private func performAutomaticCheck() async {
-        guard started, enabled, let address = activeAddress else { return }
+        guard started, anyEnabled else { return }
+        let address = source
         let now = services.now()
         lastSuccessfulSync = RestartRestore.validSuccessDate(lastSuccessfulSync, now: now)
         if let retry = sessionRetry, retry.cycle != DailySchedule.midnight(for: now) { sessionRetry = nil }
-        guard !sessionBlocked,
-              sessionRetry.map({ $0.deadline.map { now >= $0 } ?? false }) ?? true,
-              restore.automaticAllowed(address: address, lastSuccess: lastSuccessfulSync, now: now) else { return }
-        await performSync(address: address, token: generation)
+        let reminders = enabled && activeAddress == address && !sessionBlocked &&
+            (sessionRetry.map { $0.deadline.map { now >= $0 } ?? false } ?? true) &&
+            restore.automaticAllowed(address: address, lastSuccess: lastSuccessfulSync, now: now)
+        let events = calendar?.isDue(now: now) == true
+        guard reminders || events else { return }
+        await performSync(address: address, token: generation, reminders: reminders, events: events)
+    }
+    private func current(_ token: Int, _ address: String) -> Bool {
+        started && generation == token && source == address && !Task.isCancelled
     }
     private func valid(_ token: Int, _ address: String) -> Bool {
-        started && enabled && generation == token && source == address && activeAddress == address
+        current(token, address) && enabled && activeAddress == address
     }
-    private func performSync(address: String, token: Int) async {
+    private func performSync(address: String, token: Int, reminders: Bool, events: Bool) async {
+        let feed: Feed
+        let eventScope = events ? (try? CalendarScope.bb(fingerprint: CalendarScope.bbFingerprint(address: address))) : nil
         do {
-            status = "正在检查 BB 日历…"
-            let feed = try await fetch(address)
-            guard valid(token, address) else { return }
+            if reminders { status = "正在检查 BB 日历…" }
+            feed = try await fetch(address)
+            guard current(token, address) else { return }
+        } catch {
+            guard current(token, address) else { return }
+            if reminders { recordReminderFailure(error, address: address, token: token) }
+            if let eventScope { calendar?.fail(error, scope: eventScope, network: error is NetworkFailure, now: services.now()) }
+            return
+        }
+        if let eventScope, calendarEnabled {
+            preview = feed; previewAddress = address
+            calendar?.sync(scope: eventScope, now: services.now()) { try CalendarProjection.bb(feed, courses: courseNames) }
+        }
+        guard reminders, valid(token, address) else { return }
+        do {
             guard services.authorized() else { throw SafeError("提醒事项权限已关闭；请在系统设置中允许后手动重试。") }
             let result = try await services.reconcile(feed, courseNames) { self.valid(token, address) }
             guard valid(token, address) else { return }
@@ -533,20 +624,21 @@ final class SyncController: ObservableObject {
             let time = DateFormatter.localizedString(from: now, dateStyle: .short, timeStyle: .short)
             lastSync = "\(time)：新增 \(result.added)，更新 \(result.updated)，跳过首次过期项 \(result.skipped)"
             status = "同步完成。每天北京时间 00:00 检查；错过时唤醒补查。"
-        } catch {
-            guard valid(token, address) else { return }
-            let network = error is NetworkFailure
-            let now = services.now()
-            restore.recordFailure(address: address, network: network, now: now)
-            if !restore.configured || restore.metadata?.fingerprint != RestartRestore.fingerprint(address) {
-                if network {
-                    sessionBlocked = false
-                    let count = sessionRetry?.count ?? 0, delays: [TimeInterval] = [60, 300, 900]
-                    sessionRetry = RetryCheckpoint(cycle: DailySchedule.midnight(for: now), count: min(count + 1, 3), deadline: count < 3 ? now.addingTimeInterval(delays[count]) : nil)
-                } else { sessionBlocked = true }
-            }
-            status = safeMessage(error) + (network ? "自动重试最多 3 次；也可点“立即同步”。" : "请处理提示后点“立即同步”，自动重试已停止。")
+        } catch { recordReminderFailure(error, address: address, token: token) }
+    }
+    private func recordReminderFailure(_ error: Error, address: String, token: Int) {
+        guard valid(token, address) else { return }
+        let network = error is NetworkFailure
+        let now = services.now()
+        restore.recordFailure(address: address, network: network, now: now)
+        if !restore.configured || restore.metadata?.fingerprint != RestartRestore.fingerprint(address) {
+            if network {
+                sessionBlocked = false
+                let count = sessionRetry?.count ?? 0, delays: [TimeInterval] = [60, 300, 900]
+                sessionRetry = RetryCheckpoint(cycle: DailySchedule.midnight(for: now), count: min(count + 1, 3), deadline: count < 3 ? now.addingTimeInterval(delays[count]) : nil)
+            } else { sessionBlocked = true }
         }
+        status = safeMessage(error) + (network ? "自动重试最多 3 次；也可点“立即同步”。" : "请处理提示后点“立即同步”，自动重试已停止。")
     }
     private func recoveryMessage(_ error: Error) -> String {
         switch error {

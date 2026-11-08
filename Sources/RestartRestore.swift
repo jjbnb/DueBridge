@@ -16,6 +16,8 @@ struct RestartMetadata: Codable {
     var lastSuccess: Date?
     var retry: RetryCheckpoint?
     var blockedDay: Date?
+    var remindersConfigured: Bool?
+    var calendarScopeFingerprint: String?
 }
 @MainActor protocol RestartSettings {
     func load() -> RestartMetadata?
@@ -59,18 +61,27 @@ struct RestartMetadata: Codable {
             metadata = record
         }
     }
-    static func fingerprint(_ address: String) -> String {
+    nonisolated static func fingerprint(_ address: String) -> String {
         SHA256.hash(data: Data(address.utf8)).map { String(format: "%02x", $0) }.joined()
     }
     private func persist() { settings.save(metadata) }
     func setIntent(_ enabled: Bool) {
         guard metadata != nil else { return }
         metadata?.desiredEnabled = enabled
-        if !enabled { metadata?.retry = nil }
+        if enabled { metadata?.remindersConfigured = true }
+        else { metadata?.retry = nil }
         persist()
     }
-    func configure(address: String, lastSuccess: Date?, retry: RetryCheckpoint? = nil, blockedDay: Date? = nil) {
-        metadata = RestartMetadata(fingerprint: Self.fingerprint(address), desiredEnabled: true, lastSuccess: lastSuccess, retry: retry, blockedDay: blockedDay)
+    func configure(address: String, lastSuccess: Date?, retry: RetryCheckpoint? = nil, blockedDay: Date? = nil,
+                   desiredEnabled: Bool = true, remindersConfigured: Bool? = nil, calendarScopeFingerprint: String? = nil) {
+        metadata = RestartMetadata(fingerprint: Self.fingerprint(address), desiredEnabled: desiredEnabled, lastSuccess: lastSuccess,
+                                   retry: retry, blockedDay: blockedDay, remindersConfigured: remindersConfigured,
+                                   calendarScopeFingerprint: calendarScopeFingerprint)
+        persist()
+    }
+    func setCalendarScopeFingerprint(_ fingerprint: String, address: String) {
+        guard metadata?.fingerprint == Self.fingerprint(address), metadata?.calendarScopeFingerprint != fingerprint else { return }
+        metadata?.calendarScopeFingerprint = fingerprint
         persist()
     }
     func disable() { metadata = nil; persist() }
@@ -79,10 +90,10 @@ struct RestartMetadata: Codable {
               let date = record.lastSuccess, Self.valid(date, now: now) else { return nil }
         return date
     }
-    private static func valid(_ date: Date, now: Date) -> Bool {
+    nonisolated private static func valid(_ date: Date, now: Date) -> Bool {
         date.timeIntervalSince1970.isFinite && date.timeIntervalSince1970 >= 0 && date <= now
     }
-    static func validSuccessDate(_ date: Date?, now: Date) -> Date? {
+    nonisolated static func validSuccessDate(_ date: Date?, now: Date) -> Date? {
         guard let date, valid(date, now: now) else { return nil }
         return date
     }
