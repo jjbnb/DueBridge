@@ -24,7 +24,7 @@ dotnet publish Windows/DueBridge.Windows -c Release -r win-x64 --self-contained 
 
 ## 同步
 
-1. 在 BB 页粘贴私人 HTTPS 日历订阅并读取预览。在 MO 和学在浙大页，使用各自的学校窗口登录并返回归期读取预览。
+1. 在 BB 页点击「打开 BB 登录网页」。登录后从 BB 日历复制 Get External Calendar Link，粘贴私人 HTTPS 订阅并读取预览。智海 MO 和学在浙大请先连接浙大校园网，再使用各自的学校窗口登录并返回归期读取预览。
 2. 登录 Outlook，确认创建专用日历。核对预览后按来源启用同步。
 3. 查看每个来源的上次成功时间。可立即同步或暂停，也可选择随 Windows 登录启动。应用运行期间以北京时间零点为每日检查基准，恢复运行后补查。
 

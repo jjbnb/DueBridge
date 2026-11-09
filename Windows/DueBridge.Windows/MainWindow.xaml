@@ -32,13 +32,17 @@
                 <WrapPanel>
                     <Label Content="来源" Target="{Binding ElementName=SourcePicker}" Padding="0,4,6,4" />
                     <ComboBox x:Name="SourcePicker" Width="165" Margin="0,0,12,6" SelectionChanged="OnSourceChanged" />
+                    <Button x:Name="BbLoginButton" Content="打开 BB 登录网页" Click="OnOpenBlackboard" />
                     <Button x:Name="SchoolLoginButton" Content="登录学校平台" Click="OnSchoolLogin" />
                     <Button x:Name="PreviewButton" Content="读取预览" Click="OnPreview" />
                 </WrapPanel>
+                <TextBlock x:Name="SchoolNetworkHint" Margin="0,0,0,5" TextWrapping="Wrap"
+                           Text="请先连接浙大校园网，再登录或读取课程。" />
                 <StackPanel x:Name="BbInput">
                     <Label Content="BB 私人 HTTPS 日历订阅链接" Target="{Binding ElementName=BlackboardAddress}" Padding="0,0,0,4" />
                     <PasswordBox x:Name="BlackboardAddress" Padding="4" Margin="0,0,0,5" />
-                    <TextBlock Text="已保存链接时可直接读取。更换链接时，请在这里粘贴新地址。" TextWrapping="Wrap" />
+                    <TextBlock Text="在 BB 网页的日历中复制 Get External Calendar Link，再粘贴到这里。已保存链接时可直接读取。"
+                               TextWrapping="Wrap" />
                 </StackPanel>
                 <TextBlock x:Name="SourceStatus" Margin="0,5,0,0" TextWrapping="Wrap" />
             </StackPanel>

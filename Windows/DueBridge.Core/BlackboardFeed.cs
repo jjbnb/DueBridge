@@ -12,6 +12,8 @@ public sealed partial class BlackboardFeed(HttpClient http)
     private const string Prefix = "/webapps/calendar/calendarFeed/";
     private const int MaxBytes = 8 * 1024 * 1024;
 
+    public static Uri SignInPage { get; } = new("https://" + Host + "/");
+
     [GeneratedRegex(@"\Ahttps://(?<authority>[^/?#]+)(?<path>/[^?#]*)(?:\?[^#]*)?\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AbsoluteAddress();
 

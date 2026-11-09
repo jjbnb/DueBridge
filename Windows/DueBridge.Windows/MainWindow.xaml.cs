@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.NetworkInformation;
@@ -147,6 +148,21 @@ public partial class MainWindow : Window
             var preview = await school.PreviewAsync(token);
             AcceptPreview(source, preview, null, token);
         });
+    }
+
+    private void OnOpenBlackboard(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            using var browser = Process.Start(new ProcessStartInfo(BlackboardFeed.SignInPage.AbsoluteUri)
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception error) when (error is Win32Exception or InvalidOperationException)
+        {
+            Status.Text = "无法打开默认浏览器，请在浏览器访问 " + BlackboardFeed.SignInPage.AbsoluteUri;
+        }
     }
 
     private async Task<SourcePreview> ReadSourceAsync(SourceKind source, string? address, string? expected,
@@ -506,8 +522,11 @@ public partial class MainWindow : Window
         SourcePicker.IsEnabled = idle;
         BbInput.Visibility = isBb ? Visibility.Visible : Visibility.Collapsed;
         BlackboardAddress.IsEnabled = idle;
+        BbLoginButton.Visibility = isBb ? Visibility.Visible : Visibility.Collapsed;
+        BbLoginButton.IsEnabled = !_exiting;
         SchoolLoginButton.Visibility = isBb ? Visibility.Collapsed : Visibility.Visible;
         SchoolLoginButton.IsEnabled = canInterrupt;
+        SchoolNetworkHint.Visibility = isBb ? Visibility.Collapsed : Visibility.Visible;
         PreviewButton.IsEnabled = idle;
         var connection = binding.AccountId is null ? "尚未绑定" : "已绑定";
         var consent = binding.Enabled ? "同步已启用" : "同步未启用";
