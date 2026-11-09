@@ -21,7 +21,11 @@ struct MainView: View {
                     .background(controller.anyEnabled ? Color.green.opacity(0.13) : Color.gray.opacity(0.12), in: Capsule())
             }
             VStack(alignment: .leading, spacing: 7) {
-                Text("BB 私人日历订阅链接").font(.headline)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("BB 私人日历订阅链接").font(.headline)
+                    Link("打开 BB 登录网页", destination: URL(string: "https://learn.intl.zju.edu.cn/")!)
+                        .font(.callout)
+                }
                 HStack {
                     Group {
                         if revealSource { TextField("粘贴BB“Get External Calendar Link”订阅链接", text: $controller.source) }
@@ -35,7 +39,7 @@ struct MainView: View {
                         .disabled(controller.busy || controller.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .keyboardShortcut("r", modifiers: .command)
                 }
-                Text("请从 BB 日历的“Get External Calendar Link”复制私人订阅链接；日历网页地址不能用于同步。读取仅预览。")
+                Text("登录后，在 BB 日历中选择“Get External Calendar Link”，将生成的私人订阅链接粘贴到上方。读取仅预览。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
