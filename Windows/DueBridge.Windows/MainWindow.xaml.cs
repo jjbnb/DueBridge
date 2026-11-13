@@ -22,6 +22,11 @@ public partial class MainWindow : Window
     private readonly SettingsStore _store = new();
     private readonly HttpClient _bbHttp = BlackboardFeed.CreateHttpClient();
     private readonly HttpClient _outlookHttp = OutlookCalendar.CreateHttpClient();
+    private readonly HttpClient _todoHttp = OutlookCalendar.CreateHttpClient();
+    private readonly OutlookSignIn _todoSignIn;
+    private readonly TodoTasks _todo;
+    private readonly Dictionary<SourceKind, DailySyncSchedule> _todoSchedule = Sources.ToDictionary(kind => kind, _ => new DailySyncSchedule());
+    private bool _todoNeedsLogin, _todoListMissing;
     private readonly BlackboardFeed _blackboard;
     private readonly OutlookSignIn _signIn;
     private readonly OutlookCalendar _outlook;
@@ -63,10 +68,20 @@ public partial class MainWindow : Window
             Status.Text = "无法读取归期的本地设置。请检查当前 Windows 用户和数据目录。";
         }
 
+        _todoSignIn = new OutlookSignIn(SettingsStore.OutlookClientId(), Path.Combine(_store.DataDirectory, "todo.msalcache"), MicrosoftPermission.Tasks);
+        var journal = new SettingsTodoJournal(() => Dispatcher.Invoke(() => _settings), transform => Dispatcher.Invoke(() =>
+        {
+            Save(transform(_settings)); return _settings;
+        }));
+        _todo = new TodoTasks(_todoHttp, _todoSignIn.GetAccessTokenAsync, journal);
         _refresh = new WorkspaceRefresh(() => _settings, Save,
             (source, address, expected, token) => RetryAsync(cancellation => ReadSourceAsync(source, address, expected, cancellation), token),
             (target, entries, token) => RetryAsync(cancellation => _outlook.SyncAsync(target, entries, cancellation), token),
-            () => DateTimeOffset.UtcNow);
+            () => DateTimeOffset.UtcNow, (target, entries, token) =>
+            {
+                if (!_storageAvailable) throw new LocalStorageException();
+                return _todo.SyncAsync(target, entries, token);
+            });
         foreach (var source in Sources)
             if (_settings.Source(source) is { Snapshot: { } snapshot } binding && snapshot.AccountId == binding.AccountId)
                 _previews[source] = new(snapshot.AccountId, snapshot.Entries);
@@ -318,7 +333,8 @@ public partial class MainWindow : Window
             var intent = RefreshIntent.For(binding, _settings.Paused,
                 !_needsSchoolLogin.Contains(source), CanWrite,
                 !automatic || _readSchedule[source].CanAttempt(binding.LastRead, now),
-                !automatic || _schedule[source].CanAttempt(binding.LastSuccess, now), localOnly);
+                !automatic || _schedule[source].CanAttempt(binding.LastSuccess, now), localOnly, CanWriteTodo,
+                !automatic || _todoSchedule[source].CanAttempt(binding.LastTodoSuccess, now));
             return (Source: source, Intent: intent);
         }).Where(item => item.Intent.Read).ToArray();
         if (inputs.Length == 0)
@@ -332,19 +348,26 @@ public partial class MainWindow : Window
                 token.ThrowIfCancellationRequested();
                 try
                 {
-                    var outcome = await _refresh.RunScheduledAsync(source, intent, _readSchedule[source], _schedule[source], token);
+                    var outcome = await _refresh.RunScheduledAsync(source, intent, _readSchedule[source], _schedule[source], token, _todoSchedule[source]);
                     _previews[source] = outcome.Preview;
                     _needsSchoolLogin.Remove(source);
-                    if (outcome.WriteError is { } writeError)
+                    var messages = new List<string> { $"本地已更新 {outcome.Preview.Entries.Count} 项" };
+                    if (outcome.WriteError is {} calendarError)
                     {
-                        ObserveFailure(writeError, source);
-                        if (IsRetryable(writeError)) _schedule[source].MarkTransientFailure();
-                        _sourceMessages[source] = "本地任务已更新；Outlook：" + UserMessage(writeError);
+                        ObserveFailure(calendarError, source);
+                        if (IsRetryable(calendarError)) _schedule[source].MarkTransientFailure();
+                        messages.Add("Outlook：" + UserMessage(calendarError));
                     }
-                    else
-                        _sourceMessages[source] = outcome.Written is { } result
-                            ? $"本地任务已更新；Outlook 新增 {result.Added}，更新 {result.Updated}，无变化 {result.Unchanged}。"
-                            : $"本地已更新 {outcome.Preview.Entries.Count} 项，未写入 Outlook。";
+                    else if (outcome.Written is {} result) messages.Add($"Outlook 新增 {result.Added}，更新 {result.Updated}");
+                    if (outcome.TodoError is {} todoError)
+                    {
+                        ObserveFailure(todoError, source);
+                        if (IsRetryable(todoError)) _todoSchedule[source].MarkTransientFailure();
+                        messages.Add("To Do：" + UserMessage(todoError));
+                    }
+                    else if (outcome.TodoWritten is {} todoResult) messages.Add($"To Do 新增 {todoResult.Added}，更新 {todoResult.Updated}");
+                    _sourceMessages[source] = string.Join("；", messages);
+
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -353,6 +376,7 @@ public partial class MainWindow : Window
                     {
                         _readSchedule[source].MarkTransientFailure();
                         if (intent.Write) _schedule[source].MarkTransientFailure();
+                        if (intent.WriteTodo) _todoSchedule[source].MarkTransientFailure();
                     }
                     _sourceMessages[source] = UserMessage(ex);
                 }
@@ -388,6 +412,7 @@ public partial class MainWindow : Window
 
     private static bool IsRetryable(Exception error) => error switch
     {
+        TodoException todo => todo.Failure is TodoFailure.Unavailable or TodoFailure.Throttled,
         BlackboardException bb => bb.Retryable,
         SchoolConnectionException school => school.Retryable,
         OutlookException outlook => outlook.Failure is OutlookFailure.Throttled or OutlookFailure.Unavailable,
@@ -413,6 +438,11 @@ public partial class MainWindow : Window
 
     private void ObserveFailure(Exception ex, SourceKind? source = null)
     {
+        if (ex is TodoException todo)
+        {
+            if (todo.Failure is TodoFailure.SignInRequired or TodoFailure.PermissionDenied) _todoNeedsLogin = true;
+            if (todo.Failure == TodoFailure.ListMissing) _todoListMissing = true;
+        }
         if (ex is OutlookException outlook)
         {
             if (outlook.Failure is OutlookFailure.SignInRequired or OutlookFailure.PermissionDenied)
@@ -425,7 +455,7 @@ public partial class MainWindow : Window
     }
 
     private static string UserMessage(Exception ex) =>
-        ex is BlackboardException or SchoolConnectionException or OutlookException or LocalStorageException or SourceAccountChangedException or WorkspaceBindingChangedException
+        ex is TodoException or TodoSetupException or BlackboardException or SchoolConnectionException or OutlookException or LocalStorageException or SourceAccountChangedException or WorkspaceBindingChangedException
             ? ex.Message : "操作未完成，请稍后重试。";
 
     private async Task RunAsync(string status, Func<CancellationToken, Task> action)
@@ -491,7 +521,7 @@ public partial class MainWindow : Window
     {
         if (_exiting)
             return;
-        foreach (var schedule in _schedule.Values.Concat(_readSchedule.Values))
+        foreach (var schedule in _schedule.Values.Concat(_readSchedule.Values).Concat(_todoSchedule.Values))
             schedule.RearmAfterRecovery();
         UpdateCountdowns();
         await SynchronizeAsync(automatic: true);
@@ -499,7 +529,7 @@ public partial class MainWindow : Window
 
     private void ResetSchedule()
     {
-        foreach (var schedule in _schedule.Values.Concat(_readSchedule.Values))
+        foreach (var schedule in _schedule.Values.Concat(_readSchedule.Values).Concat(_todoSchedule.Values))
             schedule.Reset();
     }
 
@@ -523,6 +553,7 @@ public partial class MainWindow : Window
         {
             _bbHttp.Dispose();
             _outlookHttp.Dispose();
+            _todoHttp.Dispose();
             _allowClose = true;
             // Closing synchronously from inside a Closing callback is unsupported.
             _ = Dispatcher.InvokeAsync(Close);
@@ -577,14 +608,15 @@ public partial class MainWindow : Window
         DesktopAutoReadBox.IsChecked = binding.AutoRead;
         DesktopCardButton.IsEnabled = !_exiting;
         PauseButton.IsEnabled = canInterrupt && (_settings.Paused || Sources.Any(kind =>
-            _settings.Source(kind).Enabled || _settings.Source(kind).AutoRead));
+            _settings.Source(kind).Enabled || _settings.Source(kind).TodoEnabled || _settings.Source(kind).AutoRead));
         PauseButton.Content = _settings.Paused ? "恢复全部同步" : "暂停全部同步";
         SyncButton.IsEnabled = idle && !_settings.Paused && Sources.Any(kind =>
             !_needsSchoolLogin.Contains(kind) && _settings.Source(kind).AccountId is not null &&
-            (_settings.Source(kind).AutoRead || CanWrite && CanSyncSource(kind)));
+            (_settings.Source(kind).AutoRead || CanWrite && CanSyncSource(kind) || CanWriteTodo && _settings.Source(kind).TodoEnabled));
         CourseEditor.Visibility = isBb ? Visibility.Visible : Visibility.Collapsed;
         SaveCourseButton.IsEnabled = idle && PreviewGrid.SelectedItem is PreviewRow;
         ClearCourseButton.IsEnabled = SaveCourseButton.IsEnabled;
+        RenderTodoControls(idle, canInterrupt);
         RenderDesktopCard();
     }
 

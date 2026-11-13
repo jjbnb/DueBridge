@@ -9,6 +9,7 @@
     <ProjectReference Include="../DueBridge.Outlook/DueBridge.Outlook.csproj" />
     <Compile Include="../DueBridge.Windows/WorkspaceState.cs" Link="WorkspaceState.cs" />
     <Compile Include="../DueBridge.Windows/WorkspaceRefresh.cs" Link="WorkspaceRefresh.cs" />
+    <Compile Include="../DueBridge.Windows/SettingsTodoJournal.cs" Link="SettingsTodoJournal.cs" />
     <Compile Include="../DueBridge.Windows/LocalSettings.cs" Link="LocalSettings.cs" />
   </ItemGroup>
 </Project>

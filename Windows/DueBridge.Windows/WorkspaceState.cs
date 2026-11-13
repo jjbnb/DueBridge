@@ -10,7 +10,8 @@ internal sealed record SourceSnapshot(string AccountId, IReadOnlyList<CalendarEn
 
 internal sealed record SourceBinding(
     string? AccountId = null, bool Enabled = false, DateTimeOffset? LastSuccess = null,
-    bool AutoRead = false, DateTimeOffset? LastRead = null, SourceSnapshot? Snapshot = null, string? ReadError = null);
+    bool AutoRead = false, DateTimeOffset? LastRead = null, SourceSnapshot? Snapshot = null, string? ReadError = null,
+    bool TodoEnabled = false, DateTimeOffset? LastTodoSuccess = null);
 
 // Bounds are stored in native screen pixels, so monitor work areas and negative desktop coordinates agree.
 internal sealed record DesktopBounds(double Left, double Top, double Width, double Height)
@@ -35,6 +36,9 @@ internal sealed record LocalSettings(
     OutlookAccount? OutlookAccount, OutlookCalendarBinding? OutlookCalendar, bool Paused)
 {
     public DesktopCardSettings Card { get; init; } = new();
+    public OutlookAccount? TodoAccount { get; init; }
+    public TodoListBinding? TodoList { get; init; }
+    public Dictionary<string, string> TodoPending { get; init; } = new(StringComparer.Ordinal);
     internal static LocalSettings Empty => new(new(), new(), new(), null, new(StringComparer.Ordinal), null, null, false);
 
     internal SourceBinding Source(SourceKind kind) => kind switch
@@ -58,6 +62,13 @@ internal sealed record LocalSettings(
         Blackboard = Blackboard with { Enabled = false, LastSuccess = null },
         Mo = Mo with { Enabled = false, LastSuccess = null },
         LearningInZju = LearningInZju with { Enabled = false, LastSuccess = null }
+    };
+
+    internal LocalSettings ClearTodoConsent() => this with
+    {
+        Blackboard = Blackboard with { TodoEnabled = false, LastTodoSuccess = null },
+        Mo = Mo with { TodoEnabled = false, LastTodoSuccess = null },
+        LearningInZju = LearningInZju with { TodoEnabled = false, LastTodoSuccess = null }
     };
 
     internal LocalSettings AcceptPreview(SourceKind kind, SourcePreview preview, string? address, DateTimeOffset now)
@@ -91,6 +102,10 @@ internal sealed record LocalSettings(
     internal void Validate()
     {
         if (Blackboard is null || Mo is null || LearningInZju is null || BlackboardCourses is null || Card is null ||
+            TodoPending is null || TodoPending.Count > 1000 || TodoPending.Any(pair =>
+                string.IsNullOrWhiteSpace(pair.Key) || pair.Value is null) ||
+            (TodoList is { } todo && (todo.Account is null || todo.Account.HomeAccountId != TodoAccount?.HomeAccountId ||
+                string.IsNullOrWhiteSpace(todo.ListId))) ||
             (OutlookCalendar is { } target && (target.Account is null ||
                 target.Account.HomeAccountId != OutlookAccount?.HomeAccountId || string.IsNullOrWhiteSpace(target.CalendarId))))
             throw new JsonException("Invalid DueBridge settings.");
@@ -103,13 +118,14 @@ internal sealed record LocalSettings(
     }
 }
 
-internal sealed record RefreshIntent(bool Read, bool Write)
+internal sealed record RefreshIntent(bool Read, bool Write, bool WriteTodo = false)
 {
     internal static RefreshIntent For(SourceBinding binding, bool paused, bool sourceReady, bool targetReady,
-        bool readDue, bool writeDue, bool localOnly = false)
+        bool readDue, bool writeDue, bool localOnly = false, bool todoReady = false, bool todoDue = false)
     {
         if (!sourceReady || string.IsNullOrEmpty(binding.AccountId)) return new(false, false);
         bool write = !localOnly && !paused && targetReady && binding.Enabled && writeDue;
-        return new(localOnly || (!paused && binding.AutoRead && readDue) || write, write);
+        bool todo = !localOnly && !paused && todoReady && binding.TodoEnabled && todoDue;
+        return new(localOnly || (!paused && binding.AutoRead && readDue) || write || todo, write, todo);
     }
 }

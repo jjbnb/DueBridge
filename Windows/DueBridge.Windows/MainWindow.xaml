@@ -100,6 +100,21 @@
                         </StackPanel>
                     </Border>
 
+                    <Border Style="{StaticResource Card}" Margin="0,10,0,10">
+                        <StackPanel>
+                            <TextBlock Text="Microsoft To Do" Style="{StaticResource SectionHeading}" Margin="0,0,0,8" />
+                            <TextBlock x:Name="TodoStatus" Style="{StaticResource Caption}" Margin="0,0,0,8" />
+                            <WrapPanel>
+                                <Button x:Name="TodoLoginButton" Content="授权 To Do" Click="OnTodoLogin" />
+                                <Button x:Name="TodoSwitchButton" Content="切换 To Do 账号" Click="OnTodoSwitch" />
+                                <Button x:Name="TodoListButton" Content="创建 / 恢复归期列表" Click="OnTodoList" />
+                                <Button x:Name="TodoConsentButton" Content="启用此来源到 To Do" Click="OnTodoConsent" />
+                                <Button Content="打开 To Do 网页" Click="OnOpenTodo" />
+                                <Button x:Name="TodoPendingButton" Content="处理待确认创建" Click="OnTodoPending" />
+                            </WrapPanel>
+                            <TextBlock Text="独立授权待办权限，不要求 Outlook 日历。已完成状态、个人备注及用户提醒保留。" Style="{StaticResource Caption}" />
+                        </StackPanel>
+                    </Border>
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">

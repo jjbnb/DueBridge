@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using DueBridge.Core;
 using DueBridge.Outlook;
 
+await TodoTests.RunAsync();
 DesktopStateTests.Run();
 await DesktopRefreshTests.RunAsync();
 

@@ -5,13 +5,32 @@ using Microsoft.Identity.Client.Extensions.Msal;
 
 namespace DueBridge.Outlook;
 
-public sealed class OutlookSignIn(string clientId, string cachePath)
+public enum MicrosoftPermission { Calendar, Tasks }
+
+public static class MicrosoftPermissionPolicy
+{
+    public static string Scope(MicrosoftPermission permission) => permission switch
+    {
+        MicrosoftPermission.Calendar => "https://graph.microsoft.com/Calendars.ReadWrite",
+        MicrosoftPermission.Tasks => "https://graph.microsoft.com/Tasks.ReadWrite",
+        _ => throw new ArgumentOutOfRangeException(nameof(permission))
+    };
+
+    public static void AssertGranted(MicrosoftPermission permission, IEnumerable<string> granted)
+    {
+        var qualified = Scope(permission);
+        var shortScope = qualified["https://graph.microsoft.com/".Length..];
+        if (!granted.Any(scope => scope.Equals(qualified, StringComparison.OrdinalIgnoreCase) ||
+            scope.Equals(shortScope, StringComparison.OrdinalIgnoreCase)))
+            throw new OutlookException(OutlookFailure.PermissionDenied);
+    }
+}
+
+public sealed class OutlookSignIn(string clientId, string cachePath, MicrosoftPermission permission = MicrosoftPermission.Calendar)
 {
     private const string ConsumersAuthority = "https://login.microsoftonline.com/consumers";
     private const string ConsumersTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
-    private const string CalendarScope = "Calendars.ReadWrite";
-    private const string QualifiedCalendarScope = "https://graph.microsoft.com/Calendars.ReadWrite";
-    private static readonly string[] Scopes = [QualifiedCalendarScope];
+    private readonly string[] scopes = [MicrosoftPermissionPolicy.Scope(permission)];
 
     private readonly SemaphoreSlim gate = new(1, 1);
     private IPublicClientApplication? application;
@@ -27,7 +46,7 @@ public sealed class OutlookSignIn(string clientId, string cachePath)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromMinutes(5));
-            var request = app.AcquireTokenInteractive(Scopes)
+            var request = app.AcquireTokenInteractive(scopes)
                 .WithUseEmbeddedWebView(false)
                 .WithPrompt(Prompt.SelectAccount)
                 .WithSystemWebViewOptions(new SystemWebViewOptions
@@ -44,7 +63,7 @@ public sealed class OutlookSignIn(string clientId, string cachePath)
 
             if (expected is not null && !string.Equals(identifier, expected.HomeAccountId, StringComparison.Ordinal))
             {
-                await app.RemoveAsync(signedIn).ConfigureAwait(false);
+                // Keep the cache: this account may still be bound to the other optional destination.
                 throw new OutlookException(OutlookFailure.SignInRequired);
             }
 
@@ -60,7 +79,7 @@ public sealed class OutlookSignIn(string clientId, string cachePath)
                 cached is null)
                 throw new OutlookException(OutlookFailure.SignInRequired);
             cancellationToken.ThrowIfCancellationRequested();
-            var result = await app.AcquireTokenSilent(Scopes, cached).ExecuteAsync(cancellationToken).ConfigureAwait(false);
+            var result = await app.AcquireTokenSilent(scopes, cached).ExecuteAsync(cancellationToken).ConfigureAwait(false);
             if (!string.Equals(result.Account?.HomeAccountId?.Identifier, account.HomeAccountId, StringComparison.Ordinal))
                 throw new OutlookException(OutlookFailure.SignInRequired);
             ValidateResult(result);
@@ -76,15 +95,12 @@ public sealed class OutlookSignIn(string clientId, string cachePath)
             return true;
         }, OutlookFailure.Storage, CancellationToken.None);
 
-    private static void ValidateResult(AuthenticationResult result)
+    private void ValidateResult(AuthenticationResult result)
     {
         if (!string.Equals(result.TenantId, ConsumersTenant, StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(result.AccessToken))
             throw new OutlookException(OutlookFailure.SignInFailed);
-        if (!result.Scopes.Any(scope =>
-            scope.Equals(CalendarScope, StringComparison.OrdinalIgnoreCase) ||
-            scope.Equals(QualifiedCalendarScope, StringComparison.OrdinalIgnoreCase)))
-            throw new OutlookException(OutlookFailure.PermissionDenied);
+        MicrosoftPermissionPolicy.AssertGranted(permission, result.Scopes);
     }
 
     private async Task<T> WithApplicationAsync<T>(Func<IPublicClientApplication, Task<T>> action,

@@ -19,6 +19,8 @@ internal static class DesktopStateTests
         using var serialized = JsonDocument.Parse(JsonSerializer.Serialize(settings));
         Check(serialized.RootElement.GetProperty("Blackboard").TryGetProperty("AutoRead", out var autoRead) &&
             autoRead.ValueKind == JsonValueKind.False, "legacy upgrade defaults desktop auto-read to off");
+        Check(serialized.RootElement.GetProperty("Blackboard").TryGetProperty("TodoEnabled", out var todoEnabled) &&
+            todoEnabled.ValueKind == JsonValueKind.False, "legacy upgrade never enables To Do writing implicitly");
         Check(!settings.Card.Visible && !settings.Card.Topmost, "upgrade does not open or pin card without consent");
 
         var now = DateTimeOffset.Parse("2026-11-13T02:00:00Z");
@@ -104,8 +106,12 @@ internal static class DesktopStateTests
             try
             {
                 var store = new SettingsStore(directory);
-                store.Save(withAllSources);
+                var todoAccount = new DueBridge.Outlook.OutlookAccount("todo-account", "todo@example.test");
+                store.Save(withAllSources with { TodoAccount = todoAccount,
+                    TodoList = new(todoAccount, "todo-list"), TodoPending = new() { ["pending-op"] = "合成待确认任务" } });
                 var restored = store.Load();
+                Check(restored.TodoPending.ContainsKey("pending-op") && restored.TodoList?.ListId == "todo-list",
+                    "DPAPI restores To Do binding and pending operation guard");
                 Check(restored.DesktopEntries().Count == 4 && restored.Blackboard.LastRead == now.AddMinutes(1),
                     "Windows DPAPI save and load restores all source snapshots");
                 var path = Path.Combine(directory, "settings.dpapi");
@@ -121,6 +127,7 @@ internal static class DesktopStateTests
             finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
         }
         else Console.WriteLine("Windows DPAPI snapshot checks require Windows (skipped on this host).");
+        TodoWorkspaceTests.StateChecks();
         Console.WriteLine("Desktop state checks passed.");
     }
 

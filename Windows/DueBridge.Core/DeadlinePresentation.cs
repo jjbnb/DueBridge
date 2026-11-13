@@ -50,6 +50,12 @@ public static class DeadlinePresentation
         Notes = ""
     };
 
+    public static CalendarEntry ForTodo(CalendarEntry entry, string? course) => entry with
+    {
+        Title = $"【{CalendarText(course, UnknownCourse)}】{CalendarText(entry.Title, "未命名截止事项")}",
+        CourseLabel = CalendarText(course, UnknownCourse)
+    };
+
     private static string CalendarText(string? text, string fallback)
     {
         var value = NormalizeCourse(text);

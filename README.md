@@ -20,7 +20,7 @@
 
 macOS 版面向 Apple Silicon、macOS 14 及以上。现有提醒事项可继续使用，也可单独启用 Apple 日历，将任务写入你选定账户下的专用日历。选择 iCloud 后，可在同一 Apple 账户的设备查看。
 
-Windows 11 x64 开发版独立读取 BB、智海 MO 和学在浙大，在可拖动、缩放和置顶的桌面卡片显示课程任务与倒计时，无需配置 Outlook。也可选择写入个人 Outlook 日历，手机使用 Outlook 查看同一账户的日历。Windows 构建、桌面卡片、微软应用注册和真机验收见 [Windows 版指南](docs/windows.md)。
+Windows 11 x64 开发版独立读取 BB、智海 MO 和学在浙大，在可拖动、缩放和置顶的桌面卡片显示课程任务与倒计时，无需配置 Outlook。也可分别授权写入 Microsoft To Do 专用列表或个人 Outlook 日历，手机使用 Outlook 查看同一账户的日历。Windows 构建、桌面卡片、微软应用注册和真机验收见 [Windows 版指南](docs/windows.md)。
 
 这是面向浙大接口的同步器。接口可能随平台调整而失效。
 

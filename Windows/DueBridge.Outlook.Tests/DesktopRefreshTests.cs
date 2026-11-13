@@ -113,6 +113,7 @@ internal static class DesktopRefreshTests
         Check(switched.WriteError is WorkspaceBindingChangedException && state.Mo.LastRead == now && state.Mo.LastSuccess is null,
             "switching Outlook during a read keeps the local task but never contacts the old account");
         Console.WriteLine("Desktop refresh checks passed (9 scenarios).");
+        await TodoWorkspaceTests.RefreshChecksAsync();
     }
 
     private static void Check(bool value, string scenario)
