@@ -44,7 +44,7 @@
                         <TextBlock FontSize="25" FontWeight="SemiBold">
                             <Run Text="归期" /><Run Text="  DueBridge" FontSize="16" Foreground="{DynamicResource BannerMuted}" />
                         </TextBlock>
-                        <TextBlock Text="预览课程截止时间，并同步至个人 Outlook 日历。"
+                        <TextBlock Text="把课程截止时间汇入桌面，也可同步至个人 Outlook 日历。"
                                    Foreground="{DynamicResource BannerMuted}" TextWrapping="Wrap" Margin="0,3,0,0" />
                     </StackPanel>
                 </Grid>
@@ -94,6 +94,9 @@
                             <Border Style="{StaticResource InlineStatus}" Margin="0,8,0,0">
                                 <TextBlock x:Name="SourceStatus" Style="{StaticResource Caption}" />
                             </Border>
+                            <CheckBox x:Name="DesktopAutoReadBox" Content="每天自动更新此来源的桌面任务"
+                                      Click="OnToggleDesktopRead" Margin="0,10,0,3" />
+                            <TextBlock Text="读取预览后即可显示在桌面；无需连接 Outlook。" Style="{StaticResource Caption}" />
                         </StackPanel>
                     </Border>
 
@@ -116,11 +119,11 @@
                             <Border Height="1" Background="{DynamicResource Divider}" Margin="0,2,0,8" />
                             <WrapPanel>
                                 <Button x:Name="SourceConsentButton" Content="启用此来源同步" Click="OnChangeSourceConsent" />
-                                <Button x:Name="SyncButton" Content="立即同步" Click="OnSyncNow" Style="{StaticResource PrimaryButton}" />
+                                <Button x:Name="SyncButton" Content="立即更新" Click="OnSyncNow" Style="{StaticResource PrimaryButton}" />
                                 <Button x:Name="PauseButton" Content="暂停全部同步" Click="OnTogglePause" />
                             </WrapPanel>
                             <CheckBox x:Name="StartAtLoginBox" Content="登录 Windows 时启动" Click="OnStartAtLogin" Margin="0,4,0,6" />
-                            <TextBlock Text="自动同步按北京时间每日执行，唤醒时检查是否需要补同步。关闭窗口会退出。"
+                            <TextBlock Text="以北京时间零点为每日更新基准，启动、唤醒和网络恢复后补查。关闭主窗口会退出；使用桌面卡片时请最小化主窗口。"
                                        Style="{StaticResource Caption}" />
                         </StackPanel>
                     </Border>
@@ -135,6 +138,8 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <DockPanel Margin="14,12">
+                        <Button x:Name="DesktopCardButton" DockPanel.Dock="Right" Content="桌面卡片"
+                                Click="OnShowDesktopCard" Margin="8,0,0,0" />
                         <Border DockPanel.Dock="Right" Style="{StaticResource InlineStatus}" Padding="8,4" Margin="8,0,0,0">
                             <TextBlock Text="北京时间" Style="{StaticResource Caption}" />
                         </Border>

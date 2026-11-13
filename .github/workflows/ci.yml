@@ -59,7 +59,7 @@ jobs:
           dotnet run --configuration Release --project Windows/DueBridge.School.Tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --test Windows/DueBridge.School.Tests/SchoolBridge.test.cjs
-      - name: Test Outlook writes and retry recovery
+      - name: Test desktop snapshots, Windows DPAPI and Outlook retry recovery
         run: dotnet run --configuration Release --project Windows/DueBridge.Outlook.Tests
       - name: Build self-contained Windows x64 app
         run: dotnet publish Windows/DueBridge.Windows --configuration Release --runtime win-x64 --self-contained true --output build/windows

@@ -1,0 +1,148 @@
+<Window x:Class="DueBridge.Windows.DesktopCard"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="归期 · 桌面截止事项" Width="360" Height="480" MinWidth="288" MinHeight="340"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WorkspaceBackground}" Foreground="{DynamicResource Ink}"
+        FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Language="zh-CN" UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" CornerRadius="12"
+                           GlassFrameThickness="0" UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="WorkspaceStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <Style x:Key="PinButton" TargetType="ToggleButton">
+                <Setter Property="Padding" Value="9,6" />
+                <Setter Property="Foreground" Value="{DynamicResource BannerInk}" />
+                <Setter Property="Background" Value="{DynamicResource BannerInset}" />
+                <Setter Property="FocusVisualStyle" Value="{StaticResource WorkspaceFocus}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Border x:Name="PinSurface" Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource Mint}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="PinSurface" Property="Opacity" Value="0.85" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+    <Border BorderBrush="{DynamicResource Divider}" BorderThickness="1" CornerRadius="12">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Border CornerRadius="11,11,0,0" Background="{DynamicResource Banner}" Padding="14,12"
+                    MouseLeftButtonDown="OnDragHeader">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="×" Click="OnHide" Width="28" MinHeight="28" Margin="6,0,0,0"
+                            Padding="0" ToolTip="隐藏桌面卡片" AutomationProperties.Name="隐藏桌面卡片" />
+                    <ToggleButton x:Name="Pin" DockPanel.Dock="Right" Content="置顶" Click="OnPin"
+                                  Style="{StaticResource PinButton}" VerticalAlignment="Center"
+                                  ToolTip="让卡片显示在其他窗口上方" AutomationProperties.Name="置顶桌面卡片" />
+                    <StackPanel>
+                        <TextBlock Text="归期" Foreground="{DynamicResource BannerInk}" FontSize="21" FontWeight="SemiBold" />
+                        <TextBlock Text="桌面截止事项" Foreground="{DynamicResource BannerMuted}" FontSize="11" Margin="0,1,0,0" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <DockPanel Grid.Row="1" Margin="14,11,14,5">
+                <TextBlock x:Name="TaskCount" DockPanel.Dock="Right" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" Margin="8,0,0,0" />
+                <TextBlock x:Name="UpdateState" FontSize="11" Foreground="{DynamicResource MutedInk}" TextWrapping="Wrap"
+                           AutomationProperties.LiveSetting="Polite" />
+            </DockPanel>
+            <Grid Grid.Row="2" Margin="8,0,8,0">
+                <ListBox x:Name="Tasks" BorderThickness="0" Background="Transparent" Padding="0" HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True"
+                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                         AutomationProperties.Name="按截止时间排序的课程任务">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0,3" />
+                            <Setter Property="FocusVisualStyle" Value="{StaticResource WorkspaceFocus}" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="FocusRing" BorderThickness="1" BorderBrush="Transparent" CornerRadius="10">
+                                            <ContentPresenter />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Divider}" BorderThickness="1" CornerRadius="9" Padding="11,9">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding CourseAndSource}" Foreground="{DynamicResource MutedInk}" FontSize="11"
+                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding CourseAndSource}" />
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap"
+                                               MaxHeight="44" ToolTip="{Binding Title}" Margin="0,4,0,5" />
+                                    <TextBlock Text="{Binding Deadline}" FontSize="11" Foreground="{DynamicResource MutedInk}" />
+                                    <TextBlock Text="{Binding Countdown}" FontWeight="SemiBold" Margin="0,4,0,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource Accent}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSoon}" Value="True">
+                                                        <Setter Property="Foreground" Value="#975008" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsOverdue}" Value="True">
+                                                        <Setter Property="Foreground" Value="#B12742" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <StackPanel x:Name="EmptyState" VerticalAlignment="Center" Margin="18">
+                    <TextBlock x:Name="EmptyTitle" Text="连接课程来源" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="EmptyDescription" Text="打开归期，读取课程预览后，任务会显示在这里。"
+                               TextWrapping="Wrap" TextAlignment="Center" Foreground="{DynamicResource MutedInk}" Margin="0,8,0,0" />
+                </StackPanel>
+            </Grid>
+            <Border Grid.Row="3" Padding="14,8,14,9" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource Divider}">
+                <StackPanel>
+                    <TextBlock x:Name="SourceSummary" FontSize="10" Foreground="{DynamicResource MutedInk}" TextWrapping="Wrap"
+                               MaxHeight="70" Margin="0,0,0,7" />
+                    <DockPanel>
+                        <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="刷新" Click="OnRefresh"
+                                Style="{StaticResource PrimaryButton}" Margin="6,0,0,0" MinHeight="29" Padding="12,5" />
+                        <Button Content="打开归期" Click="OnOpenMain" HorizontalAlignment="Left" Margin="0" MinHeight="29" Padding="10,5" />
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+            <ResizeGrip Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Bottom" IsTabStop="False" />
+        </Grid>
+    </Border>
+</Window>

@@ -8,6 +8,9 @@ using System.Text.Json.Nodes;
 using DueBridge.Core;
 using DueBridge.Outlook;
 
+DesktopStateTests.Run();
+await DesktopRefreshTests.RunAsync();
+
 const string calendarPath = "/v1.0/me/calendars";
 const string targetPath = calendarPath + "/dedicated";
 const string eventPath = "/v1.0/me/calendars/dedicated/events";

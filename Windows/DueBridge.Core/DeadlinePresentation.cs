@@ -43,6 +43,13 @@ public static class DeadlinePresentation
         return entry with { Title = $"【{name}】{title} · 截止", CourseLabel = name };
     }
 
+    public static CalendarEntry ForDesktop(CalendarEntry entry, string? course) => entry with
+    {
+        Title = CalendarText(entry.Title, "未命名截止事项"),
+        CourseLabel = CalendarText(course, UnknownCourse),
+        Notes = ""
+    };
+
     private static string CalendarText(string? text, string fallback)
     {
         var value = NormalizeCourse(text);

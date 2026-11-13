@@ -1,75 +1,36 @@
 using System.IO;
 using System.Reflection;
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text.Json;
-using DueBridge.Outlook;
 using Microsoft.Win32;
 
 namespace DueBridge.Windows;
 
-internal enum SourceKind { Blackboard, Mo, LearningInZju }
-
-internal sealed record SourceBinding(
-    string? AccountId = null, bool Enabled = false, DateTimeOffset? LastSuccess = null);
-
-internal sealed record LocalSettings(
-    SourceBinding Blackboard,
-    SourceBinding Mo,
-    SourceBinding LearningInZju,
-    string? BlackboardAddress,
-    Dictionary<string, string> BlackboardCourses,
-    OutlookAccount? OutlookAccount,
-    OutlookCalendarBinding? OutlookCalendar,
-    bool Paused)
+[SupportedOSPlatform("windows")]
+internal sealed class SettingsStore(string? dataDirectory = null)
 {
-    internal static LocalSettings Empty => new(new(), new(), new(), null, new(StringComparer.Ordinal), null, null, false);
-
-    internal SourceBinding Source(SourceKind kind) => kind switch
-    {
-        SourceKind.Blackboard => Blackboard,
-        SourceKind.Mo => Mo,
-        SourceKind.LearningInZju => LearningInZju,
-        _ => throw new ArgumentOutOfRangeException(nameof(kind))
-    };
-
-    internal LocalSettings WithSource(SourceKind kind, SourceBinding value) => kind switch
-    {
-        SourceKind.Blackboard => this with { Blackboard = value },
-        SourceKind.Mo => this with { Mo = value },
-        SourceKind.LearningInZju => this with { LearningInZju = value },
-        _ => throw new ArgumentOutOfRangeException(nameof(kind))
-    };
-
-    internal LocalSettings ClearSyncConsent() => this with
-    {
-        Blackboard = Blackboard with { Enabled = false, LastSuccess = null },
-        Mo = Mo with { Enabled = false, LastSuccess = null },
-        LearningInZju = LearningInZju with { Enabled = false, LastSuccess = null }
-    };
-}
-
-internal sealed class SettingsStore
-{
-    internal string DataDirectory { get; } = Path.Combine(
+    internal string DataDirectory { get; } = dataDirectory ?? Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DueBridge");
     private string PathToFile => Path.Combine(DataDirectory, "settings.dpapi");
 
     internal LocalSettings Load()
     {
         byte[] encrypted;
-        try { encrypted = File.ReadAllBytes(PathToFile); }
+        try
+        {
+            if (new FileInfo(PathToFile).Length > 16 * 1024 * 1024)
+                throw new JsonException("DueBridge settings are too large.");
+            encrypted = File.ReadAllBytes(PathToFile);
+        }
         catch (FileNotFoundException) { return LocalSettings.Empty; }
         catch (DirectoryNotFoundException) { return LocalSettings.Empty; }
         var plaintext = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser);
         try
         {
             var settings = JsonSerializer.Deserialize<LocalSettings>(plaintext);
-            if (settings?.Blackboard is null || settings.Mo is null || settings.LearningInZju is null ||
-                settings.BlackboardCourses is null ||
-                (settings.OutlookCalendar is { } target &&
-                    (target.Account is null || target.Account.HomeAccountId != settings.OutlookAccount?.HomeAccountId ||
-                     string.IsNullOrWhiteSpace(target.CalendarId))))
-                throw new JsonException("Invalid DueBridge settings.");
+            if (settings is null) throw new JsonException("Invalid DueBridge settings.");
+            settings.Validate();
             return settings;
         }
         finally { CryptographicOperations.ZeroMemory(plaintext); }
@@ -82,6 +43,8 @@ internal sealed class SettingsStore
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(settings);
         try
         {
+            if (plaintext.Length > 16 * 1024 * 1024)
+                throw new IOException("DueBridge settings are too large.");
             var encrypted = ProtectedData.Protect(plaintext, null, DataProtectionScope.CurrentUser);
             using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
             {
@@ -110,6 +73,7 @@ internal sealed class SettingsStore
     }
 }
 
+[SupportedOSPlatform("windows")]
 internal static class StartAtLogin
 {
     private const string Key = @"Software\Microsoft\Windows\CurrentVersion\Run";
