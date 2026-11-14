@@ -138,7 +138,7 @@
                                 <Button x:Name="PauseButton" Content="暂停全部同步" Click="OnTogglePause" />
                             </WrapPanel>
                             <CheckBox x:Name="StartAtLoginBox" Content="登录 Windows 时启动" Click="OnStartAtLogin" Margin="0,4,0,6" />
-                            <TextBlock Text="以北京时间零点为每日更新基准，启动、唤醒和网络恢复后补查。关闭主窗口会退出；使用桌面卡片时请最小化主窗口。"
+                            <TextBlock Text="以北京时间零点为每日更新基准，启动、唤醒和网络恢复后补查。关闭主窗口会隐藏到通知区，右键归期图标可退出。"
                                        Style="{StaticResource Caption}" />
                         </StackPanel>
                     </Border>
@@ -153,6 +153,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <DockPanel Margin="14,12">
+                        <Button DockPanel.Dock="Right" Content="退出" Click="OnExplicitExit" Margin="8,0,0,0" ToolTip="完全退出归期并停止同步" />
                         <Button x:Name="DesktopCardButton" DockPanel.Dock="Right" Content="桌面卡片"
                                 Click="OnShowDesktopCard" Margin="8,0,0,0" />
                         <Border DockPanel.Dock="Right" Style="{StaticResource InlineStatus}" Padding="8,4" Margin="8,0,0,0">

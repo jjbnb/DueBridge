@@ -16,6 +16,9 @@ internal sealed record SourceBinding(
 // Bounds are stored in native screen pixels, so monitor work areas and negative desktop coordinates agree.
 internal sealed record DesktopBounds(double Left, double Top, double Width, double Height)
 {
+    internal static DesktopBounds PopupAt(double x,double y,DesktopBounds area,double width,double height)
+        => Fit(new(x+12,y-height-12,width,height),area with {Width=Math.Max(1,area.Width-12),Height=Math.Max(1,area.Height-12)});
+
     internal static DesktopBounds Fit(DesktopBounds bounds, DesktopBounds area)
     {
         var width = Math.Min(double.IsFinite(bounds.Width) && bounds.Width > 0 ? bounds.Width : 360, area.Width);
@@ -128,4 +131,9 @@ internal sealed record RefreshIntent(bool Read, bool Write, bool WriteTodo = fal
         bool todo = !localOnly && !paused && todoReady && binding.TodoEnabled && todoDue;
         return new(localOnly || (!paused && binding.AutoRead && readDue) || write || todo, write, todo);
     }
+}
+
+internal static class TrayClosePolicy
+{
+    internal static bool HideInsteadOfExit(bool trayAvailable,bool explicitExit,bool sessionEnding) => trayAvailable && !explicitExit && !sessionEnding;
 }

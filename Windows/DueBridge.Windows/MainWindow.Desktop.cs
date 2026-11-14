@@ -62,7 +62,13 @@ public partial class MainWindow
 
     private void RenderDesktopCard()
     {
-        if (_desktopCard is null) return;
+        RenderCard(_desktopCard);
+        RenderCard(_trayPopup);
+    }
+
+    private void RenderCard(DesktopCard? card)
+    {
+        if (card is null) return;
         var summaries = new List<string>();
         var details = new List<string>();
         foreach (var source in Sources)
@@ -84,7 +90,7 @@ public partial class MainWindow
             : _settings.Paused ? "自动读取和 Outlook 写入已暂停"
             : Sources.Any(source => _settings.Source(source).ReadError is not null) ? "更新未完成，保留上次任务"
             : "按截止时间排序 · 北京时间";
-        _desktopCard.SetContent(_settings.DesktopEntries(), hasSnapshot, status,
+        card.SetContent(_settings.DesktopEntries(), hasSnapshot, status,
             summaries.Count == 0 ? "尚未连接课程来源" : string.Join("\n", summaries), string.Join("\n\n", details),
             !_changing && !_busy && !_exiting && _storageAvailable && Sources.Any(source =>
                 _settings.Source(source).AccountId is not null && !_needsSchoolLogin.Contains(source)));

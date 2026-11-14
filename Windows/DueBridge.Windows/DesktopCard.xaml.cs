@@ -20,7 +20,7 @@ public partial class DesktopCard : Window
     private bool _exitWithApplication;
     private bool _closing;
 
-    internal DesktopCard(DesktopCardSettings settings, Action<DesktopCardSettings> persist, Action refresh, Action openMain)
+    internal DesktopCard(DesktopCardSettings settings, Action<DesktopCardSettings> persist, Action refresh, Action openMain, bool transient = false)
     {
         InitializeComponent();
         _persist = persist;
@@ -29,6 +29,12 @@ public partial class DesktopCard : Window
         _lastBounds = settings.Bounds;
         Topmost = settings.Topmost;
         Pin.IsChecked = Topmost;
+        if (transient)
+        {
+            ShowInTaskbar = false;
+            Pin.Visibility = Visibility.Collapsed;
+            Deactivated += (_, _) => { if (!_closing) Close(); };
+        }
         SourceInitialized += (_, _) =>
         {
             _handle = new WindowInteropHelper(this).Handle;
@@ -120,6 +126,12 @@ public partial class DesktopCard : Window
     }
 
     internal void EnsureVisibleAndSave() => ApplyBounds(null);
+
+    internal void PositionNearPointer(double x,double y,DesktopBounds area)
+    {
+        if (_handle == 0 || !GetWindowRect(_handle,out var current)) return;
+        ApplyBounds(DesktopBounds.PopupAt(x,y,area,current.Bounds.Width,current.Bounds.Height));
+    }
 
     private void ApplyBounds(DesktopBounds? requested)
     {

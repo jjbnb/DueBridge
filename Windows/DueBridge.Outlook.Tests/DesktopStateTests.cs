@@ -127,6 +127,14 @@ internal static class DesktopStateTests
             finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
         }
         else Console.WriteLine("Windows DPAPI snapshot checks require Windows (skipped on this host).");
+        Check(DesktopBounds.PopupAt(1910,1030,new(0,0,1920,1040),360,480) == new DesktopBounds(1548,538,360,480),
+            "tray popup opens above the pointer and stays inside the right work-area edge");
+        Check(DesktopBounds.PopupAt(-1910,10,new(-1920,0,1920,1040),360,480) == new DesktopBounds(-1898,0,360,480),
+            "tray popup handles a left-side monitor and top taskbar");
+        Check(TrayClosePolicy.HideInsteadOfExit(true,false,false) &&
+            !TrayClosePolicy.HideInsteadOfExit(false,false,false) &&
+            !TrayClosePolicy.HideInsteadOfExit(true,true,false) &&
+            !TrayClosePolicy.HideInsteadOfExit(true,false,true), "closing never traps an app without a tray icon or blocks explicit/session exit");
         TodoWorkspaceTests.StateChecks();
         Console.WriteLine("Desktop state checks passed.");
     }

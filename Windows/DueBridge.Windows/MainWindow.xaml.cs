@@ -98,6 +98,7 @@ public partial class MainWindow : Window
             NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
             SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
             if (_settings.Card.Visible) ShowDesktopCard();
+            InitializeTray();
             _timer.Start();
             await SynchronizeAsync(automatic: true);
         };
@@ -541,12 +542,13 @@ public partial class MainWindow : Window
         e.Cancel = true;
         if (_exiting)
             return;
+        if (TrayClosePolicy.HideInsteadOfExit(_trayIcon is not null, _explicitExit, _sessionEnding))
+        {
+            Hide();
+            return;
+        }
         _exiting = true;
-        _timer.Stop();
-        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
-        NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
-        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
-        _desktopCard?.CloseForExit();
+        StopExitUi();
         try { await _operation.CancelAndDrainAsync(); }
         catch (Exception) { /* The operation has stopped. */ }
         finally
@@ -637,6 +639,7 @@ public partial class MainWindow : Window
     {
         var now = DateTimeOffset.UtcNow;
         _desktopCard?.UpdateCountdowns(now);
+        _trayPopup?.UpdateCountdowns(now);
         if (PreviewGrid.ItemsSource is PreviewRow[] rows)
             foreach (var row in rows)
                 row.Update(now);
