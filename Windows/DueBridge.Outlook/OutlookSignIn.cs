@@ -41,6 +41,20 @@ public sealed class OutlookSignIn(string clientId, string cachePath, MicrosoftPe
     public Task<OutlookAccount> ConnectAsync(OutlookAccount expectedAccount, CancellationToken cancellationToken = default)
         => ConnectCoreAsync(expectedAccount, cancellationToken);
 
+    public static SystemWebViewOptions CreateBrowserOptions() => new()
+    {
+        HtmlMessageSuccess = CallbackPage("Microsoft 账号已验证。请关闭此页面并返回 DueBridge。"),
+        HtmlMessageError = CallbackPage("Microsoft 账号登录未完成。请关闭此页面并返回 DueBridge。")
+    };
+
+    // Some loopback responses are rendered with the browser's legacy default charset.
+    // ASCII HTML plus numeric entities preserves Chinese even before charset detection.
+    private static string CallbackPage(string message) =>
+        "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>DueBridge</title></head><body><p>" +
+        string.Concat(message.Select(character => character > 127
+            ? "&#" + ((int)character).ToString(System.Globalization.CultureInfo.InvariantCulture) + ";"
+            : System.Net.WebUtility.HtmlEncode(character.ToString()))) + "</p></body></html>";
+
     private Task<OutlookAccount> ConnectCoreAsync(OutlookAccount? expected, CancellationToken cancellationToken)
         => WithApplicationAsync(async app =>
         {
@@ -49,11 +63,7 @@ public sealed class OutlookSignIn(string clientId, string cachePath, MicrosoftPe
             var request = app.AcquireTokenInteractive(scopes)
                 .WithUseEmbeddedWebView(false)
                 .WithPrompt(Prompt.SelectAccount)
-                .WithSystemWebViewOptions(new SystemWebViewOptions
-                {
-                    HtmlMessageSuccess = "<p>Microsoft 账号已验证。请关闭此页面并返回 DueBridge。</p>",
-                    HtmlMessageError = "<p>Microsoft 账号登录未完成。请关闭此页面并返回 DueBridge。</p>"
-                });
+                .WithSystemWebViewOptions(CreateBrowserOptions());
             if (!string.IsNullOrWhiteSpace(expected?.Username))
                 request = request.WithLoginHint(expected.Username);
             var result = await request.ExecuteAsync(timeout.Token).ConfigureAwait(false);

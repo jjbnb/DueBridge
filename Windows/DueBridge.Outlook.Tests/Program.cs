@@ -8,6 +8,18 @@ using System.Text.Json.Nodes;
 using DueBridge.Core;
 using DueBridge.Outlook;
 
+var callback = OutlookSignIn.CreateBrowserOptions();
+foreach (var (page, expected) in new[] {
+    (callback.HtmlMessageSuccess, "Microsoft 账号已验证。请关闭此页面并返回 DueBridge。"),
+    (callback.HtmlMessageError, "Microsoft 账号登录未完成。请关闭此页面并返回 DueBridge。") })
+{
+    if (page is null || page.Any(c => c > 127))
+        throw new Exception("Microsoft callback must survive a legacy browser charset without mojibake.");
+    if (!WebUtility.HtmlDecode(Encoding.ASCII.GetString(Encoding.UTF8.GetBytes(page))).Contains(expected, StringComparison.Ordinal))
+        throw new Exception("Microsoft callback lost its Chinese success/error message.");
+}
+Console.WriteLine("Microsoft callback encoding checks passed.");
+
 await TodoTests.RunAsync();
 DesktopStateTests.Run();
 await DesktopRefreshTests.RunAsync();
